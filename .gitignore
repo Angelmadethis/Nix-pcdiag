@@ -1,0 +1,29 @@
+# Build output
+bin/
+obj/
+
+# NuGet
+*.nupkg
+packages/
+
+# Test results & coverage
+TestResults/
+coverage.*
+cobertura.xml
+
+# IDE / editor
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Local settings (if you add a config later)
+appsettings.local.json
+pcdiag.json.local

@@ -1,0 +1,38 @@
+using PCDiag.Checks.Network;
+using PCDiag.Core;
+using PCDiag.Reporting;
+
+namespace PCDiag.CLI;
+
+/// <summary>
+/// Implements the <c>pcdiag check dns</c> command: runs the DNS resolution check
+/// and prints its detailed report. No interaction required.
+/// </summary>
+public static class DnsCommand
+{
+    public static async Task<int> RunAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var context = new DiagnosticContext(
+                mode: ScanMode.Standard,
+                cancellationToken: cancellationToken,
+                defaultTimeout: TimeSpan.FromSeconds(45));
+
+            var check = new DnsDiagnosticsCheck();
+            var result = await check.ExecuteAsync(context, cancellationToken);
+
+            new TerminalRenderer().PrintDetailed(result);
+            return result.Status == DiagnosticStatus.Error ? 1 : 0;
+        }
+        catch (OperationCanceledException)
+        {
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"pcdiag check dns failed: {ex.Message}");
+            return 1;
+        }
+    }
+}
