@@ -1,8 +1,8 @@
 # PCDiag — Master Specification & Architecture Plan
 
-> **Document Status:** Phase 6 Complete  
+> **Document Status:** Phase 9 Complete  
 > **Date:** 2026-08-20  
-> **Version:** 1.5  
+> **Version:** 1.6  
 
 ---
 
@@ -34,7 +34,7 @@
 | **Testing** | xUnit 2.5 + Coverlet | Industry standard, good tooling |
 | **Language** | C# 12, nullable enabled | Safety, expressiveness |
 
-> **Note:** System.CommandLine was removed in Phase 2.5 — PCDiag is interactive by default (`pcdiag` opens the TUI). Three minimal commands exist without launching the TUI: `pcdiag info` (Phase 3) prints the read-only system inventory, `pcdiag check dns` (Phase 4) runs the DNS resolution check, and `pcdiag check mtu` / `pcdiag check gateway` / `pcdiag check packet-loss` (Phase 5) run the MTU, gateway, and packet-loss checks.
+> **Note:** System.CommandLine was removed in Phase 2.5 — PCDiag is interactive by default (`pcdiag` opens the TUI). Minimal commands exist without launching the TUI: `pcdiag info` (Phase 3) prints the read-only system inventory, `pcdiag check dns` (Phase 4) runs the DNS resolution check, `pcdiag check mtu` / `pcdiag check gateway` / `pcdiag check packet-loss` (Phase 5) run the MTU, gateway, and packet-loss checks, `pcdiag check connections` / `pcdiag check tcp` (Phase 6) run the TCP health checks, `pcdiag check events` / `pcdiag check driver` / `pcdiag check whea` (Phase 7) run the event-log-based checks, and `pcdiag check memory` / `pcdiag check pagefile` / `pcdiag check storage` (Phase 9) run the memory, pagefile, and storage checks.
 
 ---
 
@@ -769,6 +769,39 @@ DiagnosticResult
 - `pcdiag fix` command (opt-in automated fixes)
 - Configuration file support (`pcdiag.json`)
 - Summary history / trend tracking
+
+### Phase 9 — Memory & Storage Diagnostics ✅ Complete
+
+**Delivered:**
+- `PERF-MEM-001` — Memory Usage & Pressure (`pcdiag check memory`)
+- `PERF-PAG-001` — Pagefile Configuration (`pcdiag check pagefile`)
+- `PERF-DISK-001` — Storage & Disk Health (`pcdiag check storage`)
+
+**Memory sources (`WmiMemorySnapshotSource`):**
+- `Win32_OperatingSystem` (KB units): installed RAM (TotalVisibleMemorySize).
+- `Win32_PerfFormattedData_PerfOS_Memory`: committed bytes vs. commit limit, available bytes, Pages/sec, nonpaged/paged kernel pools.
+- `Win32_PageFileUsage`: current/peak/allocated pagefile usage (informational within the memory check; the pagefile check uses its own source).
+
+**Pagefile configuration (`WmiPagefileSource` + pure `PagefileConfigParser`):**
+- `Win32_PageFileSetting` is unreliable/empty in practice, so the config is read read-only from `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PagingFiles`. A bare path or `path 0 0` means system-managed; whitespace-only/empty means no pagefile. Nothing is ever written.
+
+**Storage sources (`WmiStorageInfoSource`):**
+- `Win32_LogicalDisk`: fixed volumes, capacity/free space, filesystem, dirty bit (`GetBool("VolumeDirty")`).
+- `Win32_DiskDrive`: model, size, interface; matched to `MSFT_PhysicalDisk` (scope `root\microsoft\windows\storage`) by DeviceId (a string, unlike Win32's UInt32 Index) with a model/size fallback.
+- `MSFT_PhysicalDisk`: HealthStatus (0 Healthy, 1 Warning, 2/3 Unhealthy, else Unknown), MediaType (HDD/SSD/SCM/Unknown).
+- `MSFT_StorageReliabilityCounter`: wear %, temperature, uncorrected/corrected read+write errors. Often returns 0 rows on NVMe — when unavailable, the check explicitly reports "not independently verified" and never claims the drive is healthy on missing data.
+- Latency: passive sample of `Win32_PerfRawData_PerfDisk_PhysicalDisk` deltas over a ~700ms window (100ns counter units ×1e-7 = seconds). Idle disks are reported as idle, never judged; an active disk is judged only against latency thresholds.
+
+**Thresholds (`MemoryOptions`/`StorageOptions`):**
+- Memory: commit ratio ≥ 70% Suspicious / ≥ 85% Warning; available < 15% Suspicious / < 5% Warning of installed, or < 1.5 GB absolute; Pages/sec ≥ 200 flagged as heavy paging but never judged alone. Available memory includes reclaimable standby cache, so low available memory is pressure (a symptom), not a diagnosis.
+- Pagefile: system-managed → Healthy (never flagged for high peak — Windows grows it); disabled → Suspicious, never Critical; fixed-size with current ≥ 95% of allocated or peak ≥ 90% → Suspicious (it cannot grow). Never recommends disabling the pagefile.
+- Storage: free space < 15% Suspicious / < 5% Warning; dirty volume bit → Warning; stack health Warning → Suspicious, Unhealthy → Warning, Unknown → flag only; wear ≥ 90% Warning, temperature ≥ 70°C Suspicious, uncorrected errors > 0 Warning; active latency ≥ 30ms Suspicious / ≥ 100ms Warning. Disk event-log categories (Disk/Ntfs/StorageController) are analyzed by the Phase 7 event engine; final severity = max(storage verdict, event-log severity).
+
+**Guardrails:** all three checks are read-only; no destructive tests, no full-drive benchmarks, no repairs applied. Findings describe observed state, never a root cause. Check durations: memory 45s, pagefile default, storage 60s CLI timeouts.
+
+**Tests:** +67 new (Memory classifier/parser/checks + Storage classifier/checks, reusing `FakeEventLogSource`/`Ev.New` and new `FakeMemorySnapshotSource`/`FakePagefileSource`/`FakeStorageInfoSource`) — 476 total.
+
+**Real-machine smoke test:** `check memory` → Suspicious (commit 13.2/16.7 GB = 79%); `check pagefile` → Healthy (system-managed, `?:\pagefile.sys`, 85 MB of 1.0 GB); `check storage` → Healthy (C: 161/237 GB free, KIOXIA NVMe stack health Healthy, SMART/NVMe reliability unavailable → reported "not independently verified", latency idle during sample).
 
 ---
 

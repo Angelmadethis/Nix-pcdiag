@@ -20,6 +20,9 @@ if (args.Length >= 2 && args[0].Equals("check", StringComparison.OrdinalIgnoreCa
         "events" => await EventsCommand.RunAsync(),
         "whea" => await WheaCommand.RunAsync(),
         "drivers" => await DriversCommand.RunAsync(),
+        "memory" => await MemoryCommand.RunAsync(),
+        "pagefile" => await PagefileCommand.RunAsync(),
+        "storage" => await StorageCommand.RunAsync(),
         _ => PrintUnknownCheck(args[1])
     };
 }
@@ -29,6 +32,6 @@ return await InteractiveApp.RunAsync();
 static int PrintUnknownCheck(string name)
 {
     Console.Error.WriteLine($"Unknown check: {name}");
-    Console.Error.WriteLine("Available checks: dns, mtu, gateway, packet-loss, tcp, connections, events, whea, drivers");
+    Console.Error.WriteLine("Available checks: dns, mtu, gateway, packet-loss, tcp, connections, events, whea, drivers, memory, pagefile, storage");
     return 1;
 }

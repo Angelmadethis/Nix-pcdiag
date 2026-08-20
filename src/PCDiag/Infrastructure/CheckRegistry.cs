@@ -1,5 +1,6 @@
 using PCDiag.Checks.Hardware;
 using PCDiag.Checks.Network;
+using PCDiag.Checks.Performance;
 using PCDiag.Checks.Windows;
 using PCDiag.Core;
 
@@ -27,7 +28,10 @@ public static class CheckRegistry
             new TcpHealthCheck(),
             new EventLogCheck(),
             new WheaCheck(),
-            new DriverCheck()
+            new DriverCheck(),
+            new MemoryCheck(),
+            new PagefileCheck(),
+            new StorageCheck()
         };
     }
 
