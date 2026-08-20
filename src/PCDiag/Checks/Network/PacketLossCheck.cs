@@ -1,5 +1,6 @@
 using System.Net;
 using PCDiag.Core;
+using PCDiag.Fixes;
 
 namespace PCDiag.Checks.Network;
 
@@ -7,7 +8,7 @@ namespace PCDiag.Checks.Network;
 /// Measures basic packet loss and latency to the default gateway and to a small set
 /// of internet endpoints. Conservative probe counts and timeouts. Read-only.
 /// </summary>
-public sealed class PacketLossCheck : DiagnosticCheck
+public sealed class PacketLossCheck : DiagnosticCheck, IFixableCheck
 {
     private readonly PCDiag.Net.NetOptions _options;
     private readonly PCDiag.Net.IPingProbe _probe;
@@ -69,7 +70,7 @@ public sealed class PacketLossCheck : DiagnosticCheck
             status,
             BuildSummary(overall, measurements),
             detail: BuildDetail(overall, measurements),
-            evidence: BuildEvidence(measurements, configuredTargets),
+            evidence: BuildEvidence(active, measurements, configuredTargets),
             recommendations: BuildRecommendations(overall, measurements),
             possibleCauses: PossibleCauses(overall),
             limitations: CheckLimitations,
@@ -212,10 +213,19 @@ public sealed class PacketLossCheck : DiagnosticCheck
     }
 
     private IReadOnlyList<DiagnosticEvidence> BuildEvidence(
+        PCDiag.Inventory.NetworkAdapterInfo active,
         IReadOnlyList<TargetMeasurement> measurements,
         IReadOnlyList<string> configuredTargets)
     {
-        var evidence = new List<DiagnosticEvidence>();
+        var evidence = new List<DiagnosticEvidence>
+        {
+            new()
+            {
+                Description = "Active Adapter",
+                Value = $"{active.Name} ({string.Join(", ", active.IpAddresses)})",
+                Source = "SystemInventory.Network"
+            }
+        };
         foreach (var m in measurements)
         {
             var label = m.IsGateway ? $"Gateway {m.Target}" : $"Internet {m.Target}";
@@ -352,5 +362,34 @@ public sealed class PacketLossCheck : DiagnosticCheck
             PCDiag.Net.PacketLossHealth.InternetUnreachable => 0.6,
             _ => Math.Min(0.85, 0.45 + 0.08 * minAttempts)
         };
+    }
+
+    /// <summary>
+    /// Fixes offered for a packet-loss finding. Significant loss or an unreachable path
+    /// can benefit from a Winsock catalog reset; a stale DHCP lease or flaky adapter is
+    /// addressed by renewing the lease and restarting the adapter. Healthy results
+    /// offer no fixes.
+    /// </summary>
+    public IReadOnlyList<DiagnosticFix> GetFixes(DiagnosticResult result)
+    {
+        if (result.Status != DiagnosticStatus.Finding || result.Severity < DiagnosticSeverity.Suspicious)
+            return Array.Empty<DiagnosticFix>();
+
+        var fixes = new List<DiagnosticFix>();
+        var severe = result.Severity >= DiagnosticSeverity.Warning;
+        var adapter = PCDiag.Fixes.NetworkFixHelpers.GetActiveAdapterName(result);
+        var problem = severe
+            ? "Packet loss is significant or a tested path is unreachable."
+            : "Packet loss or latency is elevated on one or more tested paths.";
+
+        if (adapter is not null)
+            fixes.Add(new RestartNetworkAdapterFix(problem, adapter));
+        if (severe)
+        {
+            fixes.Add(new DhcpRenewFix(problem));
+            fixes.Add(new WinsockResetFix(problem));
+        }
+
+        return fixes;
     }
 }

@@ -1,5 +1,6 @@
 using System.Net;
 using PCDiag.Core;
+using PCDiag.Fixes;
 
 namespace PCDiag.Checks.Network;
 
@@ -10,7 +11,7 @@ namespace PCDiag.Checks.Network;
 /// recommendation to change DNS; that requires reliability or reachability evidence.
 /// Read-only: DNS settings are never modified.
 /// </summary>
-public sealed class DnsDiagnosticsCheck : DiagnosticCheck
+public sealed class DnsDiagnosticsCheck : DiagnosticCheck, IFixableCheck
 {
     private readonly PCDiag.Dns.DnsOptions _options;
     private readonly PCDiag.Dns.IDnsTransport _transport;
@@ -315,4 +316,21 @@ public sealed class DnsDiagnosticsCheck : DiagnosticCheck
             .Select(m => m.Stats.AvgLatencyMs!.Value)
             .DefaultIfEmpty(0)
             .Max();
+
+    /// <summary>
+    /// Fixes offered for a DNS finding. A flush of the resolver cache is appropriate
+    /// whenever resolution is degraded; it is reversible and never changes DNS settings.
+    /// Healthy or unavailable results offer no fixes.
+    /// </summary>
+    public IReadOnlyList<DiagnosticFix> GetFixes(DiagnosticResult result)
+    {
+        if (result.Status != DiagnosticStatus.Finding || result.Severity < DiagnosticSeverity.Suspicious)
+            return Array.Empty<DiagnosticFix>();
+
+        var problem = result.Severity == DiagnosticSeverity.Suspicious
+            ? "DNS resolution is experiencing unusually high latency."
+            : "DNS resolution is unreliable or failing.";
+
+        return new DiagnosticFix[] { new DnsCacheFlushFix(problem) };
+    }
 }

@@ -1,4 +1,5 @@
 using PCDiag.Core;
+using PCDiag.Fixes;
 using PCDiag.Infrastructure;
 using PCDiag.Inventory;
 using PCDiag.Reporting;
@@ -17,8 +18,13 @@ public static class InteractiveApp
         Exit,
         Details,
         Rerun,
-        Info
+        Info,
+        Fix
     }
+
+    private sealed record FixableFinding(DiagnosticResult Result, IDiagnosticCheck Check, IReadOnlyList<DiagnosticFix> Fixes);
+
+    private sealed record MenuChoice(AppAction Action, string Display, IReadOnlyList<FixableFinding>? Fixes = null);
 
     /// <summary>
     /// Run the interactive UI. When <paramref name="console"/> is provided (tests) no real
@@ -60,23 +66,28 @@ public static class InteractiveApp
 
             while (true)
             {
-                var summary = await RunScanAsync(ansi, !autoStart, systemInventory, checks, cts.Token);
-                ShowResults(ansi, summary, !autoStart);
+                var checkList = checks ?? CheckRegistry.GetAllChecks();
+                var summary = await RunScanAsync(ansi, !autoStart, systemInventory, checkList, cts.Token);
+                ShowResults(ansi, summary, !autoStart, checkList);
 
                 if (autoStart)
                     return 0;
 
-                switch (SelectAction(ansi))
+                var fixable = GetFixableFindings(summary, checkList);
+                switch (SelectAction(ansi, fixable))
                 {
-                    case AppAction.Exit:
+                    case { Action: AppAction.Exit }:
                         return 0;
-                    case AppAction.Details:
-                        await ShowDetails(ansi, summary, cts.Token);
+                    case { Action: AppAction.Details }:
+                        await ShowDetails(ansi, summary, systemInventory, checkList, cts.Token);
                         break;
-                    case AppAction.Info:
+                    case { Action: AppAction.Info }:
                         await ShowSystemInfo(ansi, systemInventory, cts.Token);
                         break;
-                    case AppAction.Rerun:
+                    case { Action: AppAction.Fix, Fixes: { Count: > 0 } fixes }:
+                        await ShowFixFlow(ansi, fixes, systemInventory, cts.Token);
+                        break;
+                    case { Action: AppAction.Rerun }:
                     default:
                         break;
                 }
@@ -179,12 +190,12 @@ public static class InteractiveApp
             });
     }
 
-    private static void ShowResults(IAnsiConsole ansi, ScanSummary summary, bool interactive)
+    private static void ShowResults(IAnsiConsole ansi, ScanSummary summary, bool interactive, IReadOnlyList<IDiagnosticCheck> checks)
     {
         if (interactive)
             ansi.Clear();
 
-        ansi.Write(ResultsTableBuilder.Build(summary));
+        ansi.Write(ResultsTableBuilder.Build(summary, checkId => HasFixes(checks, checkId)));
         ansi.WriteLine();
 
         ansi.MarkupLine(
@@ -209,19 +220,24 @@ public static class InteractiveApp
         ansi.WriteLine();
     }
 
-    private static AppAction SelectAction(IAnsiConsole ansi)
+    private static MenuChoice SelectAction(IAnsiConsole ansi, IReadOnlyList<FixableFinding> fixable)
     {
-        var prompt = new SelectionPrompt<string>()
-            .Title("[bold cyan]What next?[/]")
-            .AddChoices("View check details", "System info", "Run scan again", "Exit");
+        var choices = new List<MenuChoice>();
+        if (fixable.Count > 0)
+            choices.Add(new MenuChoice(AppAction.Fix, $"Fix all problems ({fixable.Count})", fixable));
+        foreach (var finding in fixable)
+            choices.Add(new MenuChoice(AppAction.Fix, $"[[ FIX ]] {finding.Result.Name}", new[] { finding }));
+        choices.Add(new MenuChoice(AppAction.Details, "View check details"));
+        choices.Add(new MenuChoice(AppAction.Info, "System info"));
+        choices.Add(new MenuChoice(AppAction.Rerun, "Run scan again"));
+        choices.Add(new MenuChoice(AppAction.Exit, "Exit"));
 
-        return ansi.Prompt(prompt) switch
-        {
-            "View check details" => AppAction.Details,
-            "System info" => AppAction.Info,
-            "Run scan again" => AppAction.Rerun,
-            _ => AppAction.Exit
-        };
+        var prompt = new SelectionPrompt<MenuChoice>()
+            .Title("[bold cyan]What next?[/]")
+            .UseConverter(c => c.Display)
+            .AddChoices(choices);
+
+        return ansi.Prompt(prompt);
     }
 
     private static async Task ShowSystemInfo(IAnsiConsole ansi, SystemInventory inventory, CancellationToken token)
@@ -232,7 +248,12 @@ public static class InteractiveApp
         await ansi.Input.ReadKeyAsync(true, token);
     }
 
-    private static async Task ShowDetails(IAnsiConsole ansi, ScanSummary summary, CancellationToken token)
+    private static async Task ShowDetails(
+        IAnsiConsole ansi,
+        ScanSummary summary,
+        SystemInventory inventory,
+        IReadOnlyList<IDiagnosticCheck> checks,
+        CancellationToken token)
     {
         if (summary.Results.Count == 0)
             return;
@@ -245,7 +266,138 @@ public static class InteractiveApp
 
         new TerminalRenderer().PrintDetailed(pick);
         ansi.WriteLine();
+
+        if (checks.FirstOrDefault(c => c.CheckId == pick.CheckId) is IFixableCheck fixable
+            && fixable.GetFixes(pick) is { Count: > 0 } fixes)
+        {
+            var choice = ansi.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("[bold cyan]This finding has a recommended fix. Apply it?[/]")
+                    .UseConverter(v => v == "apply" ? "[[ Apply Fix ]]" : "[[ Cancel ]]")
+                    .AddChoices("apply", "cancel"));
+
+            if (choice == "apply")
+            {
+                var context = new DiagnosticContext(
+                    mode: ScanMode.Standard,
+                    isAdministrator: SystemInfo.IsRunningAsAdmin(),
+                    cancellationToken: token,
+                    inventory: inventory);
+                var outcome = await new FixExecutor().ExecuteAsync(fixable, fixes[0], context, pick, token);
+                ShowFixOutcome(ansi, pick, fixes[0], outcome);
+                ansi.MarkupLine("[grey]Press [bold green]ENTER[/] to return[/]");
+                await ansi.Input.ReadKeyAsync(true, token);
+                return;
+            }
+        }
+
         ansi.MarkupLine("[grey]Press [bold green]ENTER[/] to return[/]");
         await ansi.Input.ReadKeyAsync(true, token);
+    }
+
+    private static bool HasFixes(IReadOnlyList<IDiagnosticCheck> checks, string checkId)
+    {
+        return checks.FirstOrDefault(c => c.CheckId == checkId) is IFixableCheck;
+    }
+
+    private static IReadOnlyList<FixableFinding> GetFixableFindings(ScanSummary summary, IReadOnlyList<IDiagnosticCheck> checks)
+    {
+        return summary.Results
+            .Where(r => r.Status == DiagnosticStatus.Finding)
+            .Select(r => (Result: r, Check: checks.FirstOrDefault(c => c.CheckId == r.CheckId)))
+            .Where(t => t.Check is IFixableCheck fixable && fixable.GetFixes(t.Result).Count > 0)
+            .Select(t => new FixableFinding(t.Result, t.Check!, ((IFixableCheck)t.Check!).GetFixes(t.Result)))
+            .ToList();
+    }
+
+    private static async Task ShowFixFlow(
+        IAnsiConsole ansi,
+        IReadOnlyList<FixableFinding> findings,
+        SystemInventory inventory,
+        CancellationToken token)
+    {
+        var context = new DiagnosticContext(
+            mode: ScanMode.Standard,
+            isAdministrator: SystemInfo.IsRunningAsAdmin(),
+            cancellationToken: token,
+            inventory: inventory);
+
+        ansi.Clear();
+        if (!ShowFixProposal(ansi, findings))
+        {
+            ansi.MarkupLine("[grey]Fixes cancelled.[/]");
+            await ansi.Input.ReadKeyAsync(true, token);
+            return;
+        }
+
+        foreach (var (result, check, fixes) in findings)
+        {
+            var fixable = (IFixableCheck)check;
+            foreach (var fix in fixes)
+            {
+                var outcome = await new FixExecutor().ExecuteAsync(fixable, fix, context, result, token);
+                ShowFixOutcome(ansi, result, fix, outcome);
+            }
+        }
+    }
+
+    private static bool ShowFixProposal(IAnsiConsole ansi, IReadOnlyList<FixableFinding> findings)
+    {
+        var lines = new List<string>();
+        foreach (var (result, _, fixes) in findings)
+        {
+            foreach (var fix in fixes)
+            {
+                var glyph = result.Severity == DiagnosticSeverity.Critical ? "✕" : "⚠";
+                var color = SeverityStyling.ColorFor(result.Severity).ToMarkup();
+                var risk = fix.Risk switch
+                {
+                    FixRisk.Low => "LOW",
+                    FixRisk.Medium => "MEDIUM",
+                    _ => "HIGH"
+                };
+
+                lines.Add($"[bold {color}]{glyph} {result.Name.ToUpperInvariant()}[/]");
+                lines.Add($"  [bold]Problem:[/] {Markup.Escape(fix.Problem)}");
+                lines.Add($"  [bold]Fix:[/] {Markup.Escape(fix.Title)}");
+                lines.Add($"  [bold]Effect:[/] {Markup.Escape(fix.Effect)}");
+                lines.Add($"  [bold]Severity:[/] {SeverityStyling.MarkupFor(result.Severity)} (fix risk: [bold]{risk}[/])");
+                lines.Add(string.Empty);
+            }
+        }
+
+        var panel = new Panel(new Markup(string.Join("\n", lines)))
+        {
+            Border = BoxBorder.Rounded,
+            Padding = new Padding(2, 1)
+        };
+        ansi.Write(panel);
+        ansi.WriteLine();
+
+        var choice = ansi.Prompt(
+            new SelectionPrompt<string>()
+                .Title($"[bold cyan]Apply {findings.Sum(f => f.Fixes.Count)} fix(es)?[/]")
+                .UseConverter(v => v == "apply" ? "[[ Apply ]]" : "[[ Cancel ]]")
+                .AddChoices("apply", "cancel"));
+
+        return choice == "apply";
+    }
+
+    private static void ShowFixOutcome(IAnsiConsole ansi, DiagnosticResult result, DiagnosticFix fix, FixExecutionResult outcome)
+    {
+        ansi.WriteLine();
+        ansi.MarkupLine(outcome.Applied ? "[bold green]✓ FIX APPLIED[/]" : "[bold red]✕ FIX NOT APPLIED[/]");
+        ansi.MarkupLine(Markup.Escape(outcome.Message));
+
+        if (outcome.ErrorDetail is not null)
+            ansi.MarkupLine($"[grey]{Markup.Escape(outcome.ErrorDetail)}[/]");
+
+        if (outcome.RecheckResult is not null)
+        {
+            ansi.MarkupLine("[grey]Re-running diagnostic...[/]");
+            ansi.MarkupLine(outcome.Resolved
+                ? $"[bold green]✓ {Markup.Escape(result.Name)} issue resolved.[/]"
+                : $"[bold yellow]✕ {Markup.Escape(result.Name)} issue persists.[/]");
+        }
     }
 }

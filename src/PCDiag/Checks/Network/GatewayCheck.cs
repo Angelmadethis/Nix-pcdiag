@@ -1,4 +1,5 @@
 using PCDiag.Core;
+using PCDiag.Fixes;
 
 namespace PCDiag.Checks.Network;
 
@@ -6,7 +7,7 @@ namespace PCDiag.Checks.Network;
 /// Measures reachability, packet loss, and latency of the active default gateway.
 /// Read-only: no settings are modified.
 /// </summary>
-public sealed class GatewayCheck : DiagnosticCheck
+public sealed class GatewayCheck : DiagnosticCheck, IFixableCheck
 {
     private readonly PCDiag.Net.NetOptions _options;
     private readonly PCDiag.Net.IPingProbe _probe;
@@ -296,5 +297,32 @@ public sealed class GatewayCheck : DiagnosticCheck
             PCDiag.Net.GatewayHealth.Slow => 0.7,
             _ => 0.8
         };
+    }
+
+    /// <summary>
+    /// Fixes offered for a gateway finding. Unreachable or lossy gateways can benefit
+    /// from renewing the DHCP lease and restarting the adapter; a reset of the Winsock
+    /// catalog covers stale/corrupted stack state. Healthy results offer no fixes.
+    /// </summary>
+    public IReadOnlyList<DiagnosticFix> GetFixes(DiagnosticResult result)
+    {
+        if (result.Status != DiagnosticStatus.Finding || result.Severity < DiagnosticSeverity.Suspicious)
+            return Array.Empty<DiagnosticFix>();
+
+        var fixes = new List<DiagnosticFix>();
+        var unreachable = result.Severity >= DiagnosticSeverity.Warning;
+        var adapter = PCDiag.Fixes.NetworkFixHelpers.GetActiveAdapterName(result);
+        var problem = unreachable
+            ? "The default gateway is unreachable or losing packets."
+            : "Latency to the default gateway is elevated.";
+
+        if (adapter is not null)
+            fixes.Add(new RestartNetworkAdapterFix(problem, adapter));
+        fixes.Add(new DhcpRenewFix(problem));
+
+        if (unreachable)
+            fixes.Add(new WinsockResetFix(problem));
+
+        return fixes;
     }
 }

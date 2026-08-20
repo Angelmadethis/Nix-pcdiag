@@ -1,4 +1,5 @@
 using PCDiag.Core;
+using PCDiag.Fixes;
 
 namespace PCDiag.Checks.Network;
 
@@ -8,7 +9,7 @@ namespace PCDiag.Checks.Network;
 /// interpreted in context (ratios, rates) rather than as bare counts. Read-only: no
 /// TCP registry values are read for modification, and none are ever written.
 /// </summary>
-public sealed class TcpHealthCheck : DiagnosticCheck
+public sealed class TcpHealthCheck : DiagnosticCheck, IFixableCheck
 {
     private readonly PCDiag.Net.Tcp.TcpOptions _options;
     private readonly PCDiag.Net.Tcp.ITcpStatsSource _statsSource;
@@ -415,5 +416,23 @@ public sealed class TcpHealthCheck : DiagnosticCheck
             PCDiag.Net.Tcp.TcpHealthVerdict.Suspicious => 0.6,
             _ => 0.8
         };
+    }
+
+    /// <summary>
+    /// Fixes offered for a TCP health finding. A non-default Receive Window Auto-Tuning
+    /// level is restored to Normal; a Winsock reset addresses elevated retransmissions
+    /// or adapter errors. Healthy results offer no fixes.
+    /// </summary>
+    public IReadOnlyList<DiagnosticFix> GetFixes(DiagnosticResult result)
+    {
+        if (result.Status != DiagnosticStatus.Finding || result.Severity < DiagnosticSeverity.Suspicious)
+            return Array.Empty<DiagnosticFix>();
+
+        var fixes = new List<DiagnosticFix>();
+        if (PCDiag.Fixes.NetworkFixHelpers.IsAutotuningNonDefault(result))
+            fixes.Add(new AutotuningRestoreFix("TCP Receive Window Auto-Tuning is at a non-default level."));
+        fixes.Add(new WinsockResetFix("TCP statistics show elevated retransmissions, connection failures, or adapter errors."));
+
+        return fixes;
     }
 }

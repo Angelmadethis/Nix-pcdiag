@@ -1,8 +1,8 @@
 # PCDiag — Master Specification & Architecture Plan
 
-> **Document Status:** Phase 9 Complete  
+> **Document Status:** Phase 10 Complete  
 > **Date:** 2026-08-20  
-> **Version:** 1.6  
+> **Version:** 1.7  
 
 ---
 
@@ -16,7 +16,7 @@
 - Gamers optimizing their systems for performance
 
 ### Design Principles
-1. **Read-only by default** — Never modify the system. Checks observe, never act (a future `pcdiag fix` command will be opt-in).
+1. **Read-only by default** — Checks observe, never act. Fixes are opt-in and only ever applied after explicit user confirmation (Phase 10).
 2. **Structured evidence** — Every finding includes evidence and a confidence score so users can evaluate the diagnosis themselves.
 3. **Interactive by default** — `pcdiag` opens a simple terminal GUI: press **ENTER** to start the scan, watch live progress, then review results and drill into details.
 4. **Self-contained output** — The terminal UI is the primary interface; no external dependencies to view results.
@@ -805,6 +805,40 @@ DiagnosticResult
 
 ---
 
+### Phase 10 — Automatic Fixes (opt-in, user-confirmed) ✅ Complete
+
+**Objective:** make findings actionable by applying real, reversible fixes directly from the TUI. Nothing is ever applied automatically — every fix requires explicit user confirmation. The reusable fix engine means any diagnostic can offer its own remediation.
+
+**Fix engine (`src/PCDiag/Fixes/`):**
+- `DiagnosticFix` (abstract): Id, Title, Problem, Effect, Risk (Low/Medium/High), RequiresAdmin, `ApplyAsync`, optional targeted `VerifyAsync`.
+- `FixExecutor`: orchestrates apply-then-verify. Guards admin-required fixes (never attempted when not elevated), applies the fix, then verifies either via a fix-specific check or by re-running the owning diagnostic. Resolved = recheck countable and (Passed or severity dropped below the original finding).
+- `FixModels.cs`: `FixRisk`, `FixApplyOutcome` (Applied/Failed/NotApplicable), `FixApplyResult`, `FixExecutionResult`.
+- `IFixableCheck` (in `Core/`): a check that implements this interface and returns fixes via `GetFixes(DiagnosticResult)`.
+
+**Real fixes implemented (all with injectable command runners for tests):**
+| Fix | Command | Risk | Admin | Wired to |
+|---|---|---|---|---|
+| `DnsCacheFlushFix` | `ipconfig /flushdns` | Low | no | DNS Resolution |
+| `WinsockResetFix` | `netsh winsock reset` | Medium | yes | Gateway, Packet Loss, TCP |
+| `TcpIpStackResetFix` | `netsh int ip reset` | High (reboot) | yes | Gateway, Packet Loss (unreachable) |
+| `RestartNetworkAdapterFix` | PowerShell `Restart-NetAdapter` | Medium | yes | Gateway, Packet Loss, TCP |
+| `DhcpRenewFix` | `ipconfig /release` + `/renew` | Medium | yes | Gateway, Packet Loss (unreachable) |
+| `AutotuningRestoreFix` | `netsh interface tcp set global autotuninglevel=normal` | Medium | yes | TCP (auto-tuning non-default) |
+
+**Fixable checks:** `DnsDiagnosticsCheck`, `GatewayCheck`, `PacketLossCheck`, `TcpHealthCheck` now implement `IFixableCheck`. Fix selection is evidence-driven (adapter name and auto-tuning level are read from the result's evidence via `NetworkFixHelpers`), so fixes are only offered when the relevant condition was actually detected.
+
+**TUI integration:**
+- Results table gains a `FIX` column rendering a `[ FIX ]` button on each fixable finding row (`ResultsTableBuilder.Build(summary, isFixable)`).
+- The "What next?" menu lists **per-finding fix buttons** (`[ FIX ] <name>`) plus **Fix all problems (N)** when any finding is fixable.
+- `ShowFixFlow`: one summary panel listing every chosen fix (problem / fix / effect / severity / risk) with a single **Apply / Cancel** confirmation, then applies each fix in sequence with live `✓ FIX APPLIED` / `✕ FIX NOT APPLIED` outcomes. The natural scan loop re-runs afterward to show refreshed results.
+- The per-check details view also offers the applicable fix inline.
+
+**Guardrails:** no automatic fixes; one confirmation covers the whole batch; every fix states its effect and what it does *not* change; admin-required fixes are surfaced as "run as administrator" instead of being attempted; fixes only ever touch the described state (registry, Winsock catalog, TCP/IP stack, adapter, DHCP lease, DNS cache).
+
+**Tests:** +26 new (per-fix success/failure/admin unit tests, check-fix wiring tests, interactive fix-flow tests incl. confirm / cancel / failed / per-finding button / no-fixable-findings) — 522 total.
+
+---
+
 ## 9. Testing Strategy
 
 | Layer | Tool | Coverage Target |
@@ -825,7 +859,7 @@ DiagnosticResult
 
 ## 10. Open Questions (For Future Phases)
 
-1. Should `pcdiag fix` require explicit confirmation per fix, or batch?
+1. Should fix suggestions be exposed in non-interactive/CLI output (e.g., `pcdiag check dns --fix`)?
 2. Should we support plugin checks (external DLLs implementing `IDiagnosticCheck`)?
 3. Should we support PowerShell Core on Windows (cross-platform potential)?
 4. Should checks have configurable thresholds (e.g., "warn if uptime > 30 days" adjustable)?

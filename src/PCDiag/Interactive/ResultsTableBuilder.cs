@@ -9,7 +9,11 @@ namespace PCDiag.Interactive;
 /// </summary>
 public static class ResultsTableBuilder
 {
-    public static Table Build(ScanSummary summary)
+    /// <summary>
+    /// Build the results table. When <paramref name="isFixable"/> is provided it is used
+    /// to render a <c>[ FIX ]</c> button on each fixable finding row.
+    /// </summary>
+    public static Table Build(ScanSummary summary, Func<string, bool>? isFixable = null)
     {
         var table = new Table
         {
@@ -22,6 +26,8 @@ public static class ResultsTableBuilder
         table.AddColumn(new TableColumn("CHECK").PadRight(2));
         table.AddColumn(new TableColumn("NAME").PadRight(2));
         table.AddColumn(new TableColumn("SUMMARY"));
+        if (isFixable is not null)
+            table.AddColumn(new TableColumn("FIX").PadLeft(1));
 
         foreach (var result in summary.Results.OrderBy(r => r.Severity))
         {
@@ -38,11 +44,25 @@ public static class ResultsTableBuilder
             var status = $"[{statusColor}]{result.Status.ToString().ToUpperInvariant()}[/]";
             var severity = SeverityStyling.BadgeFor(result.Severity);
 
-            table.AddRow(
-                new Markup(status),
-                new Markup(result.CheckId),
-                new Markup(result.Name),
-                new Markup($"{severity} {result.Summary.EscapeMarkup()}"));
+            if (isFixable is not null)
+            {
+                var fixable = result.Status == DiagnosticStatus.Finding && isFixable(result.CheckId);
+                var fix = fixable ? "[bold green][[ FIX ]][/]" : "";
+                table.AddRow(
+                    new Markup(status),
+                    new Markup(result.CheckId),
+                    new Markup(result.Name),
+                    new Markup($"{severity} {result.Summary.EscapeMarkup()}"),
+                    new Markup(fix));
+            }
+            else
+            {
+                table.AddRow(
+                    new Markup(status),
+                    new Markup(result.CheckId),
+                    new Markup(result.Name),
+                    new Markup($"{severity} {result.Summary.EscapeMarkup()}"));
+            }
         }
 
         return table;
