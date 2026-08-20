@@ -15,6 +15,11 @@ if (args.Length >= 2 && args[0].Equals("check", StringComparison.OrdinalIgnoreCa
         "mtu" => await MtuCommand.RunAsync(commandArgs),
         "gateway" => await GatewayCommand.RunAsync(commandArgs),
         "packet-loss" => await PacketLossCommand.RunAsync(commandArgs),
+        "tcp" => await TcpCommand.RunAsync(),
+        "connections" => await ConnectionsCommand.RunAsync(),
+        "events" => await EventsCommand.RunAsync(),
+        "whea" => await WheaCommand.RunAsync(),
+        "drivers" => await DriversCommand.RunAsync(),
         _ => PrintUnknownCheck(args[1])
     };
 }
@@ -24,6 +29,6 @@ return await InteractiveApp.RunAsync();
 static int PrintUnknownCheck(string name)
 {
     Console.Error.WriteLine($"Unknown check: {name}");
-    Console.Error.WriteLine("Available checks: dns, mtu, gateway, packet-loss");
+    Console.Error.WriteLine("Available checks: dns, mtu, gateway, packet-loss, tcp, connections, events, whea, drivers");
     return 1;
 }

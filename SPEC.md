@@ -1,8 +1,8 @@
 # PCDiag — Master Specification & Architecture Plan
 
-> **Document Status:** Phase 5 Complete  
+> **Document Status:** Phase 6 Complete  
 > **Date:** 2026-08-20  
-> **Version:** 1.4  
+> **Version:** 1.5  
 
 ---
 
@@ -111,6 +111,22 @@ The project has a working foundation with the following components:
 | `IInterfaceMtuSource.cs` | Interface MTU discovery abstraction (mock seam) | ✅ Complete |
 | `WmiInterfaceMtuSource.cs` | Reads `Win32_NetworkAdapterConfiguration.MTU` (by IP) with a `MSFT_NetIPInterface.NlMtu` fallback (by name); parse/match logic is pure and tested | ✅ Complete |
 
+#### TCP Health (`src/PCDiag/Net/Tcp/`)
+| File | Purpose | Status |
+|------|---------|--------|
+| `TcpConnectionState.cs` | MIB/TCP state enum (Listen/Established/CloseWait/TimeWait/Bound...) + pure `FromMibState` mapping | ✅ Complete |
+| `TcpConnectionRecord.cs` | Single TCP connection/endpoint (state, addresses, ports, owning PID) | ✅ Complete |
+| `ITcpConnectionSource.cs` | Connection-table abstraction (mock seam); `WmiTcpConnectionSource` reads `MSFT_NetTCPConnection` | ✅ Complete |
+| `TcpStateSummary.cs` | Pure aggregation: per-state counts, per-process CLOSE_WAIT/established, distinct in-range local ports | ✅ Complete |
+| `TcpCumulativeStats.cs` | Cumulative stats + contextual ratios (failures/initiations, retransmitted/segments); `ITcpStatsSource` | ✅ Complete |
+| `NetTcpStatsSource.cs` | .NET `GetTcpIPv4Statistics` (failures, resets) + `Win32_PerfRawData_Tcpip_TCPv4` perf counters (segments, retransmits, resets) | ✅ Complete |
+| `TcpConfiguration.cs` | Read-only TCP config record + `TcpAutotuningLevel` enum + `ITcpConfigSource` | ✅ Complete |
+| `WmiTcpConfigSource.cs` | Registry reads (`Tcpip\Parameters`, never writes) + `MSFT_NetTCPSetting` auto-tuning/port range; pure `MapAutotuningLevel` | ✅ Complete |
+| `WmiTcpAdapterErrorSource.cs` | `Win32_PerfRawData_Tcpip_NetworkInterface` error counters with normalized-name adapter matching | ✅ Complete |
+| `TcpOptions.cs` | Thresholds (documented in Phase 6 section below) | ✅ Complete |
+| `TcpConnectionsClassifier.cs` | Contextual connection verdict: TIME_WAIT vs port pool, CLOSE_WAIT clusters, established | ✅ Complete |
+| `TcpHealthClassifier.cs` | Contextual health verdict: ratios, auto-tuning, registry tweaks, adapter error rate | ✅ Complete |
+
 #### CLI (`src/PCDiag/CLI/`)
 | File | Purpose | Status |
 |------|---------|--------|
@@ -119,6 +135,8 @@ The project has a working foundation with the following components:
 | `MtuCommand.cs` | Minimal `pcdiag check mtu [target]`: run MTU check + print detailed report, exit | ✅ Complete |
 | `GatewayCommand.cs` | Minimal `pcdiag check gateway`: run gateway check + print detailed report, exit | ✅ Complete |
 | `PacketLossCommand.cs` | Minimal `pcdiag check packet-loss [target...]`: run packet-loss check + print report, exit | ✅ Complete |
+| `TcpCommand.cs` | Minimal `pcdiag check tcp`: run TCP health check + print detailed report, exit | ✅ Complete |
+| `ConnectionsCommand.cs` | Minimal `pcdiag check connections`: run connection-states check + print report, exit | ✅ Complete |
 
 #### Interactive UI (`src/PCDiag/Interactive/`)
 | File | Purpose | Status |
@@ -141,6 +159,8 @@ The project has a working foundation with the following components:
 | `NET-MTU-001` | Interface & Path MTU | Network | ✅ Real check (interface MTU vs measured path MTU, DF probing, black-hole detection) |
 | `NET-GWY-001` | Default Gateway | Network | ✅ Real check (reachability, loss, latency) |
 | `NET-LOSS-001` | Packet Loss & Latency | Network | ✅ Real check (gateway + up to two internet endpoints) |
+| `NET-CONN-001` | TCP Connection States | Network | ✅ Real check (TIME_WAIT vs port pool, CLOSE_WAIT clusters, established) |
+| `NET-TCP-001` | TCP Configuration & Statistics | Network | ✅ Real check (retransmissions, failures, auto-tuning, registry tweaks, adapter errors) |
 | *(empty)* | Performance, Hardware, Gaming, Security checks | — | 🔲 Not started |
 
 #### Tests (`tests/PCDiag.Tests/`)
@@ -174,13 +194,20 @@ The project has a working foundation with the following components:
 | `Net/MtuDiagnosticsCheckTests.cs` | End-to-end MTU check: 1500/1492/9000 healthy, confirmed mismatch, black hole, interface-unknown, no gateway, dead target, gateway fallback, configurable target | ✅ Complete (11 tests) |
 | `Net/GatewayCheckTests.cs` | End-to-end gateway check: healthy, unreachable, lossy, slow, no gateway, no connection | ✅ Complete (6 tests) |
 | `Net/PacketLossCheckTests.cs` | End-to-end packet-loss check: healthy, internet loss, gateway unreachable, internet unreachable, cancellation, configurable targets | ✅ Complete (10 tests) |
+| `Net/Tcp/TcpFakes.cs` | Shared fake infra: `FakeTcpConnectionSource`, `FakeTcpStatsSource`, `FakeTcpConfigSource`, `FakeAdapterErrorSource`, `TcpConn` builders, `TcpInventory` (active adapter + uptime) | ✅ Complete |
+| `Net/Tcp/TcpStateMappingTests.cs` | MIB-state mapping, adapter-name normalization, auto-tuning level mapping | ✅ Complete (18 tests) |
+| `Net/Tcp/TcpStateSummaryTests.cs` | State counts, per-process breakdowns, dynamic-range port counting | ✅ Complete (6 tests) |
+| `Net/Tcp/TcpConnectionsClassifierTests.cs` | TIME_WAIT vs port pool (small pool share never flagged), CLOSE_WAIT clusters/leaks, established, worst-wins | ✅ Complete (11 tests) |
+| `Net/Tcp/TcpHealthClassifierTests.cs` | Retransmission/failure ratio bands, auto-tuning states, group policy, registry tweaks, adapter error rates, worst-wins | ✅ Complete (33 tests) |
+| `Net/Tcp/TcpConnectionsCheckTests.cs` | End-to-end connection check: healthy, high TIME_WAIT contextualized (not "leak"), CLOSE_WAIT cluster, port range | ✅ Complete (5 tests) |
+| `Net/Tcp/TcpHealthCheckTests.cs` | End-to-end TCP health check: healthy, high retransmission, disabled auto-tuning, registry evidence, adapter matching/rates, unavailable counters | ✅ Complete (9 tests) |
 
 ### 3.2 Gaps & Issues Identified
 
 1. **No JSON/file output** — Results are terminal-only; no export capability.
 2. **No `--json` flag** — Cannot pipe output to other tools or save reports. `pcdiag info` (Phase 3) prints a text inventory report, but no structured export exists yet.
 3. **Empty check categories** — Performance, Hardware, Gaming, and Security have no checks.
-4. **Only four real checks so far** — `NET-DNS-001` (DNS Resolution), `NET-MTU-001` (Interface & Path MTU), `NET-GWY-001` (Default Gateway), and `NET-LOSS-001` (Packet Loss & Latency) are the first real network diagnostics; performance, hardware, gaming, and security checks arrive in later phases.
+4. **Six real network checks so far** — `NET-DNS-001` (DNS Resolution), `NET-MTU-001` (Interface & Path MTU), `NET-GWY-001` (Default Gateway), `NET-LOSS-001` (Packet Loss & Latency), `NET-CONN-001` (TCP Connection States), and `NET-TCP-001` (TCP Configuration & Statistics) are the real diagnostics; performance, hardware, gaming, and security checks arrive in later phases.
 5. **No configuration/options file** — Cannot persist user preferences (e.g., default scan depth).
 6. **No cross-reference between checks** — Each check runs independently; no correlation engine.
 
@@ -352,7 +379,9 @@ PCDiag.sln
 │   │   ├── DnsCommand.cs                   # `pcdiag check dns` — run DNS check + print report
 │   │   ├── MtuCommand.cs                   # `pcdiag check mtu [target]` — MTU check + report
 │   │   ├── GatewayCommand.cs               # `pcdiag check gateway` — gateway check + report
-│   │   └── PacketLossCommand.cs            # `pcdiag check packet-loss [target...]` — check + report
+│   │   ├── PacketLossCommand.cs            # `pcdiag check packet-loss [target...]` — check + report
+│   │   ├── TcpCommand.cs                   # `pcdiag check tcp` — TCP health check + report
+│   │   └── ConnectionsCommand.cs           # `pcdiag check connections` — connection states + report
 │   ├── Core/
 │   │   ├── DiagnosticCategory.cs           # Category enum
 │   │   ├── DiagnosticStatus.cs             # Status enum (incl. Unavailable, PermissionDenied)
@@ -401,6 +430,20 @@ PCDiag.sln
 │   │   ├── MtuClassifier.cs                # Healthy/PotentialIssue/ConfirmedMismatch/Unmeasurable/InterfaceMtuUnknown
 │   │   ├── IInterfaceMtuSource.cs          # Interface MTU discovery abstraction
 │   │   └── WmiInterfaceMtuSource.cs        # MTU via WMI adapter config + NetIPInterface fallback
+│   │   └── Tcp/
+│   │       ├── TcpConnectionState.cs       # MIB/TCP state enum + FromMibState mapping
+│   │       ├── TcpConnectionRecord.cs      # Single connection/endpoint record
+│   │       ├── ITcpConnectionSource.cs     # Connection-table abstraction
+│   │       ├── WmiTcpConnectionSource.cs   # MSFT_NetTCPConnection table reader
+│   │       ├── TcpStateSummary.cs          # State + per-process aggregation
+│   │       ├── TcpCumulativeStats.cs       # Cumulative stats + ratios; ITcpStatsSource
+│   │       ├── NetTcpStatsSource.cs        # .NET TcpStatistics + TCPv4 perf counters
+│   │       ├── TcpConfiguration.cs         # Read-only TCP config record; ITcpConfigSource
+│   │       ├── WmiTcpConfigSource.cs       # Registry + MSFT_NetTCPSetting reader (never writes)
+│   │       ├── WmiTcpAdapterErrorSource.cs # NetworkInterface perf error counters
+│   │       ├── TcpOptions.cs               # TCP threshold constants
+│   │       ├── TcpConnectionsClassifier.cs # Connection-state verdict (contextual)
+│   │       └── TcpHealthClassifier.cs      # TCP health verdict (ratios, tuning, tweaks)
 │   ├── Checks/
 │   │   ├── Windows/
 │   │   │   └── EnvironmentCheck.cs         # ✅ WIN-ENV-001 (example)
@@ -408,7 +451,9 @@ PCDiag.sln
 │   │       ├── DnsDiagnosticsCheck.cs      # ✅ NET-DNS-001 (DNS Resolution)
 │   │       ├── MtuDiagnosticsCheck.cs      # ✅ NET-MTU-001 (Interface & Path MTU)
 │   │       ├── GatewayCheck.cs             # ✅ NET-GWY-001 (Default Gateway)
-│   │       └── PacketLossCheck.cs          # ✅ NET-LOSS-001 (Packet Loss & Latency)
+│   │       ├── PacketLossCheck.cs          # ✅ NET-LOSS-001 (Packet Loss & Latency)
+│   │       ├── TcpConnectionsCheck.cs      # ✅ NET-CONN-001 (TCP Connection States)
+│   │       └── TcpHealthCheck.cs           # ✅ NET-TCP-001 (TCP Configuration & Statistics)
 │   ├── Infrastructure/
 │   │   ├── CheckRegistry.cs                # Check registration + lookup by id/name
 │   │   ├── CommandRunner.cs                # Command execution (incl. CommandResult)
@@ -452,6 +497,14 @@ PCDiag.sln
         ├── MtuDiagnosticsCheckTests.cs     # End-to-end MTU check
         ├── GatewayCheckTests.cs            # End-to-end gateway check
         └── PacketLossCheckTests.cs         # End-to-end packet-loss check
+    └── Net/Tcp/
+        ├── TcpFakes.cs                     # Fake sources/builders + TcpInventory
+        ├── TcpStateMappingTests.cs         # State/normalization/autotuning mapping
+        ├── TcpStateSummaryTests.cs         # Aggregation + per-process breakdowns
+        ├── TcpConnectionsClassifierTests.cs# Connection verdict (contextual)
+        ├── TcpHealthClassifierTests.cs     # Health verdict (ratios, tuning, tweaks)
+        ├── TcpConnectionsCheckTests.cs     # End-to-end connection check
+        └── TcpHealthCheckTests.cs          # End-to-end TCP health check
 ```
 
 ### 5.2 Target Structure (After All Phases)
@@ -533,6 +586,11 @@ PCDiag.sln
 **Choice:** `PCDiag.Net` measures the largest Don't-Fragment packet that traverses a path using a bounded binary search over payload sizes (default 68–1472 bytes), then confirms the boundary with repeated probes and records whether oversized packets get an ICMP "fragmentation needed" reply (cooperative PMTU discovery) or are silently dropped (possible PMTU black hole). Reachability checks probe the gateway 4 times (1 s timeout) and up to two internet endpoints 5 times (2 s timeout, early abort after 2 consecutive timeouts); the MTU search probes each path ~10–13 times plus 2 confirmation probes (1 s timeout).
 **Rationale:** Multiple measurements drive classification so transient blips don't mislead; the probe budget is logarithmic and fixed, so the tool never floods the network; worst-case runtimes stay well under the 30 s per-check scanner timeout (MTU ≈ 26 s, packet-loss ≈ 24 s, gateway ≈ 4 s). Different MTUs (1500, 1492 PPPoE, 9000 jumbo) are all treated as healthy when the measurement agrees with the interface; findings always use "Potential MTU/path issue" wording unless the boundary is confirmed. The internet path is capped at 1500 bytes so large packets are never sent to the WAN; for jumbo interfaces the full-range gateway measurement drives the verdict.
 **Tradeoff:** Path MTU can differ per destination and is measured only on the ICMP echo path; networks that block ICMP echo or suppress fragmentation-needed errors yield Unmeasurable/black-hole results rather than a wrong MTU.
+
+### Decision 10: TCP Diagnostics Are Read-Only and Contextual
+**Choice:** `PCDiag.Net.Tcp` reads TCP state, statistics, configuration, and adapter error counters from WMI, .NET `TcpStatistics`, perf counters, and the registry — and **never writes any registry value**. Verdicts are contextual: TIME_WAIT is judged as a fraction of the dynamic port pool (never "bad" on its own), connection failures and retransmissions are ratios against initiations/segments, adapter errors are a rate against uptime, and auto-tuning/registry tweaks are flagged as "non-default" rather than alarmist.
+**Rationale:** TCP behavior is only meaningful in context; bare counts mislead (a busy browser generates many short-lived connections and some failed attempts). The user explicitly required no TCP registry tweaks, so the tool diagnoses but never "fixes" TCP by writing settings. Unavailable counters are reported as "Not available"/"unavailable" — never fabricated or mistaken for healthy.
+**Tradeoff:** A single snapshot cannot measure growth or rates over time; the checks tell the user to re-run to see whether a pattern persists, and one-directional failure counts are not available from the .NET API (only the combined `FailedConnectionAttempts`), so direction is omitted from evidence.
 
 ### Decision 4: Sequential Execution (Currently)
 **Choice:** Checks run one at a time, not in parallel.  
@@ -669,8 +727,28 @@ DiagnosticResult
 - `pcdiag check mtu [target]`, `pcdiag check gateway`, `pcdiag check packet-loss [target...]` print detailed reports via `TerminalRenderer` and exit; unknown `pcdiag check` names print the available list
 - New tests: 81 (stats/mapping 9, path MTU searcher 8, classifiers + MTU lookup 37, MTU check 11, gateway check 6, packet-loss check 10) — 233 total
 
-### Phase 6 — Performance & Hardware Checks
-*After Phase 5 approval.*
+### Phase 6 — TCP Health ✅ Complete
+
+**Scope delivered:**
+- Two new network checks, both registered in `CheckRegistry` (run in the interactive TUI scan) and exposed as exact-match CLI commands:
+  - `NET-CONN-001` (TCP Connection States) — `pcdiag check connections`: reads the live connection table from `MSFT_NetTCPConnection` (state is a **Byte**: 2=Listen, 5=Established, 8=CloseWait, 11=TimeWait, 100=Bound) and aggregates per-state counts, distinct in-range local ports, and per-process CLOSE_WAIT/established breakdowns
+  - `NET-TCP-001` (TCP Configuration & Statistics) — `pcdiag check tcp`: combines `.NET GetTcpIPv4Statistics` (failures = `FailedConnectionAttempts`, resets, cumulative connections), `Win32_PerfRawData_Tcpip_TCPv4` perf counters (segments sent/received/retransmitted, `ConnectionsReset`), `MSFT_NetTCPSetting` (auto-tuning level, dynamic port range), `Win32_PerfRawData_Tcpip_NetworkInterface` (adapter errors/discards), and read-only registry reads under `Tcpip\Parameters`
+- **Interpretation is contextual (never bare counts):**
+  - TIME_WAIT is judged as a fraction of the dynamic port pool and is **never labeled bad on its own**; only at ≥ 25% of the pool it is Elevated, ≥ 60% it is a Warning (pool exhaustion risk). A busy browser generates many TIME_WAIT sockets — normal.
+  - CLOSE_WAIT is both a total-socket concern and a per-process concern: > 10 sockets Suspicious, > 50 Warning, or a single process owning > 25 → likely socket leak.
+  - Established > 1000 Elevated, > 5000 Warning (possible runaway/P2P).
+  - Retransmission ratio (retransmitted ÷ sent+received): ≥ 1% Suspicious, ≥ 5% Warning.
+  - Connection failure ratio (failures ÷ initiations): ≥ 10% Suspicious, ≥ 30% Warning. Failures to dead hosts/blocked ports are partly normal; ratio keeps it contextual.
+  - Adapter error **rate** (errors ÷ uptime): ≥ 0.01/s Suspicious, ≥ 0.10/s Warning.
+  - Auto-tuning: Normal is expected; Disabled/Restricted/HighlyRestricted/Experimental are flagged "non-default" (never alarmist). Group-policy override (254 sentinel = "not configured") is surfaced only when it differs from the effective level.
+  - Registry tweaks: `MaxUserPort < 5000` → Warning; `TcpTimedWaitDelay < 30` → Suspicious; `TcpWindowSize`/`GlobalMaxTcpWindowSize` set → Suspicious (they disable auto-tuning). Unset values are reported as "Windows default".
+- **Threshold rationale** (why these values): the default dynamic port pool is 49152–65535 (16384 ports). 25% ≈ 4096 TIME_WAIT sockets — browsers/HTTP clients with keep-alive rarely exceed a few hundred, so 25% marks a large accumulation and 60% ≈ 9830 is the point where new outbound connections start risking port exhaustion. CLOSE_WAIT is inherently abnormal (the local app failed to close); > 10 indicates a pattern and > 50 or one process > 25 is a leak. Desktop PCs rarely hold more than ~1000 established connections; > 5000 is runaway territory. Retransmission ≥ 1% of segments is well above healthy Wi-Fi/LAN (< 0.1–0.5%) and ≥ 5% points to real loss. Failure ratio ≥ 10% exceeds normal dead-host/blocked-port noise (single digits %) and ≥ 30% means the link is broadly failing. Adapter error rates above 0.01/s (≈ 1 error/minute) and 0.10/s (≈ 1 error/10 s) bracket healthy hardware (often 0) and problematic links.
+- **Read-only guarantee:** `Tcpip\Parameters` is opened for reads only; no registry value is ever written, and the checks state this in their limitations. Auto-tuning "fixes" are offered as optional manual commands in the recommendation text, never applied.
+- New tests: 82 (mapping/normalization/autotuning 18, state summary 6, connections classifier 11, health classifier 33, connections check 5, health check 9) — 315 total
+- Real-machine smoke test: `check connections` → Healthy (17 established, 18 TIME_WAIT, 0 CLOSE_WAIT, 0% of port pool); `check tcp` → Suspicious with evidence (24% connection failures, 1% retransmissions, autotuning Normal, all registry values default, adapter error counters matched via normalized name); TUI scan lists all 7 checks with correct verdicts.
+
+### Phase 7 — Performance & Hardware Checks
+*After Phase 6 approval.*
 
 **Scope:**
 - `PERF-DPC-001` — DPC latency check
@@ -681,8 +759,8 @@ DiagnosticResult
 - `HW-GPU-001` — GPU driver and temperature check
 - Admin-elevated checks support
 
-### Phase 7 — Gaming Checks & Advanced Features
-*After Phase 6 approval.*
+### Phase 8 — Gaming Checks & Advanced Features
+*After Phase 7 approval.*
 
 **Scope:**
 - `GAME-OPT-001` — Game mode / power plan check

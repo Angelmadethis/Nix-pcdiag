@@ -1,3 +1,4 @@
+using PCDiag.Checks.Hardware;
 using PCDiag.Checks.Network;
 using PCDiag.Checks.Windows;
 using PCDiag.Core;
@@ -21,7 +22,12 @@ public static class CheckRegistry
             new DnsDiagnosticsCheck(),
             new MtuDiagnosticsCheck(),
             new GatewayCheck(),
-            new PacketLossCheck()
+            new PacketLossCheck(),
+            new TcpConnectionsCheck(),
+            new TcpHealthCheck(),
+            new EventLogCheck(),
+            new WheaCheck(),
+            new DriverCheck()
         };
     }
 

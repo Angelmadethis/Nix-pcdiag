@@ -58,6 +58,7 @@ public static class WmiQuery
             return value switch
             {
                 null => null,
+                byte b => b,
                 ushort us => us,
                 uint ui => (int)ui,
                 int i => i,

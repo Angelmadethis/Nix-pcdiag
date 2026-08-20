@@ -24,3 +24,6 @@ Always:
 - make diagnostics modular
 - test calculations independently
 - fail safely
+
+important:
+- ALl features that check the pc are to be shown in the gui
