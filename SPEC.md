@@ -1,8 +1,8 @@
 # PCDiag — Master Specification & Architecture Plan
 
-> **Document Status:** Phase 10 Complete  
+> **Document Status:** Phase 11 Complete  
 > **Date:** 2026-08-20  
-> **Version:** 1.7  
+> **Version:** 1.8  
 
 ---
 
@@ -839,6 +839,29 @@ DiagnosticResult
 
 ---
 
+### Phase 11 — Driver / Interrupt Investigation ✅ Complete
+
+**Objective:** detect sustained driver-related latency indicators (microstutters, audio glitches, input delay, FPS hitching, network spikes) from Windows-supported mechanisms — without pretending to measure true DPC latency when the chosen API cannot.
+
+**Command:** `pcdiag check drivers-latency` (check `HW-LAT-001` "Interrupt & DPC Activity (driver latency indicators)", Hardware category, confidence-scored).
+
+**What is measured (and what is not):**
+- Reliable performance counters from `Win32_PerfRawData_PerfOS_Processor`, sampled passively twice ~1.5s apart with delta math (same technique as the Phase 9 disk-latency sampling): **Interrupts/sec**, **DPCs queued/sec**, **DPC rate**, **% privileged time**, **% processor time**, per logical processor + `_Total`.
+- Percentage counters are derived from raw 100ns-tick deltas over the shared `Timestamp_Sys100NS` base (the class exposes no `_Base` columns; the naive `_Base` names are invalid WQL).
+- The deprecated **`% DPC Time` / `% Interrupt Time` counters are never used** — they have always returned zero since Windows 8. This is stated explicitly in the "Measurement Honesty" evidence row.
+- The check **does NOT measure true per-DPC latency** (µs per DPC). That requires an admin ETW kernel trace (LatencyMon, or Windows Performance Recorder with the kernel interrupt/DPC providers). This is stated in the summary of limitations and in the report.
+- Activity is **never attributed to a specific driver/device** without an ETW stack trace; the loaded-driver (`Win32_SystemDriver`) and device (`Win32_PnPEntity`) lists are shown as context only.
+
+**Classifier (`InterruptClassifier`, pure):** heuristic thresholds (interrupts/sec ≥ 10k suspicious / ≥ 25k high; DPCs/sec ≥ 2k / ≥ 8k; % privileged ≥ 20% / ≥ 40%; single-core interrupt concentration ≥ 3× median and ≥ 5k/s floor) combine into a verdict (Healthy / Suspicious / Warning) plus a **confidence score** weighted by how many independent signals agree and by data availability (0.4 when counters unavailable, 0.9 healthy, 0.5–0.79 findings).
+
+**Output shape:** "Potential driver latency issue" summary; evidence includes per-core + `_Total` activity rows, a CPU-correlation row (correlation, never causation), the context-only inventory, threshold reference, and the measurement-honesty statement. Recommendations steer toward a real ETW DPC-latency trace, Device Manager checks, and manufacturer driver updates — **no driver or device is ever recommended for automatic uninstallation**.
+
+**Guardrails:** read-only; no load test; unreadable counters degrade to `Unavailable`, never to a fabricated healthy/finding result.
+
+**Tests:** +20 new (classifier thresholds/verdicts/confidence, check-level healthy/elevated/high/unavailable/honesty/inventory/no-uninstall-rec) — 542 total. Real-machine smoke test: 8-core laptop → Healthy (≈2.5k interrupts/s, ≈212 DPCs/s, privileged 2.7%), confidence 90%.
+
+---
+
 ## 9. Testing Strategy
 
 | Layer | Tool | Coverage Target |
@@ -852,6 +875,8 @@ DiagnosticResult
 | Check (DNS) | xUnit + fakes | End-to-end check against `FakeDnsTransport`/`FakeDnsServerSource`: healthy/slow/unreliable/unreachable/no-config scenarios; real DNS probing is verified by manual smoke test |
 | Unit (Net) | xUnit | Stats math, IPStatus mapping, path-MTU binary search, gateway/packet-loss/MTU classifiers, MTU source lookup — no network |
 | Check (Net) | xUnit + fakes | End-to-end MTU/gateway/packet-loss checks against `FakePingProbe`/`FakeMtuSource`/`PathSimulator`: healthy, mismatch, black hole, unreachable, unavailable, cancellation, configurable targets; real probing is verified by manual smoke test |
+| Unit (Interrupts) | xUnit | `InterruptClassifier` thresholds, verdicts, confidence weighting, unavailable-counters path — no WMI |
+| Check (Interrupts) | xUnit + fakes | End-to-end `DriverLatencyCheck` against `FakeInterruptSnapshotSource`: healthy/elevated/high/unavailable, measurement-honesty evidence, no-auto-uninstall guarantee |
 | Integration (checks) | xUnit | Each real check against current machine (may need `[Trait("Integration")]`) |
 | Interactive UI | xUnit + `TestConsole` | End-to-end flow: ENTER starts scan, ESC exits, results render, System info menu, redirected-stdin auto-start |
 

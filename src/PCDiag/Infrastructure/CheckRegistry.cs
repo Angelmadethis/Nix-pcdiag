@@ -29,6 +29,7 @@ public static class CheckRegistry
             new EventLogCheck(),
             new WheaCheck(),
             new DriverCheck(),
+            new DriverLatencyCheck(),
             new MemoryCheck(),
             new PagefileCheck(),
             new StorageCheck()
