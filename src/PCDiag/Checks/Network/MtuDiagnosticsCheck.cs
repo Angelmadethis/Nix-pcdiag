@@ -1,5 +1,6 @@
 using System.Net;
 using PCDiag.Core;
+using PCDiag.Fixes;
 
 namespace PCDiag.Checks.Network;
 
@@ -10,7 +11,7 @@ namespace PCDiag.Checks.Network;
 /// flagged on its own. Findings use the wording "Potential MTU/path issue" unless the
 /// measurement is strong and confirmed. Read-only: no settings are modified.
 /// </summary>
-public sealed class MtuDiagnosticsCheck : DiagnosticCheck
+public sealed class MtuDiagnosticsCheck : DiagnosticCheck, IFixableCheck
 {
     private readonly PCDiag.Net.MtuOptions _options;
     private readonly PCDiag.Net.IPingProbe _probe;
@@ -482,5 +483,26 @@ public sealed class MtuDiagnosticsCheck : DiagnosticCheck
             PCDiag.Net.MtuVerdict.Healthy => 0.8,
             _ => 0.9
         };
+    }
+
+    /// <summary>
+    /// Fixes offered for an MTU/path finding. A confirmed or potential mismatch
+    /// can be addressed by resetting the interface MTU to the Windows default (1500).
+    /// Healthy or unavailable results offer no fixes.
+    /// </summary>
+    public IReadOnlyList<DiagnosticFix> GetFixes(DiagnosticResult result)
+    {
+        if (result.Status != DiagnosticStatus.Finding || result.Severity < DiagnosticSeverity.Suspicious)
+            return Array.Empty<DiagnosticFix>();
+
+        var adapter = PCDiag.Fixes.NetworkFixHelpers.GetActiveAdapterName(result);
+        if (adapter is null)
+            return Array.Empty<DiagnosticFix>();
+
+        var problem = result.Severity >= DiagnosticSeverity.Warning
+            ? "Interface MTU exceeds the measured path MTU, causing packet loss or black holes."
+            : "Interface MTU may exceed the measured path MTU; the measurement was not fully confirmed.";
+
+        return new[] { new MtuAutoFix(problem, adapter) };
     }
 }

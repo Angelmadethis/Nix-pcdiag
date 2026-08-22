@@ -48,7 +48,7 @@ public class CheckFixWiringTests
     }
 
     [Fact]
-    public void Gateway_Unreachable_ShouldOfferRestartRenewAndWinsock()
+    public void Gateway_Unreachable_ShouldOfferRestartRenewWinsockAndTcpIpStack()
     {
         var check = new GatewayCheck();
 
@@ -57,6 +57,7 @@ public class CheckFixWiringTests
         Assert.Contains(fixes, f => f is RestartNetworkAdapterFix);
         Assert.Contains(fixes, f => f is DhcpRenewFix);
         Assert.Contains(fixes, f => f is WinsockResetFix);
+        Assert.Contains(fixes, f => f is TcpIpStackResetFix);
         var restart = Assert.Single(fixes.OfType<RestartNetworkAdapterFix>());
         Assert.Equal("Ethernet", restart.AdapterName);
     }
@@ -95,7 +96,7 @@ public class CheckFixWiringTests
     }
 
     [Fact]
-    public void PacketLoss_Unreachable_ShouldOfferAllFixes()
+    public void PacketLoss_Unreachable_ShouldOfferAllFixesIncludingTcpIpStack()
     {
         var check = new PacketLossCheck();
 
@@ -104,6 +105,7 @@ public class CheckFixWiringTests
         Assert.Contains(fixes, f => f is RestartNetworkAdapterFix);
         Assert.Contains(fixes, f => f is DhcpRenewFix);
         Assert.Contains(fixes, f => f is WinsockResetFix);
+        Assert.Contains(fixes, f => f is TcpIpStackResetFix);
     }
 
     [Fact]
@@ -136,5 +138,48 @@ public class CheckFixWiringTests
 
         Assert.DoesNotContain(fixes, f => f is AutotuningRestoreFix);
         Assert.Contains(fixes, f => f is WinsockResetFix);
+    }
+
+    [Fact]
+    public void MtuDiagnostics_Healthy_ShouldOfferNoFixes()
+    {
+        var check = new MtuDiagnosticsCheck();
+
+        var fixes = check.GetFixes(Result(check.CheckId, check.Name, DiagnosticSeverity.Healthy, DiagnosticStatus.Passed));
+
+        Assert.Empty(fixes);
+    }
+
+    [Fact]
+    public void MtuDiagnostics_ConfirmedMismatch_ShouldOfferMtuAutoFix()
+    {
+        var check = new MtuDiagnosticsCheck();
+
+        var fixes = check.GetFixes(Result(check.CheckId, check.Name, DiagnosticSeverity.Warning, evidence: AdapterEvidence()));
+
+        var fix = Assert.Single(fixes);
+        Assert.IsType<MtuAutoFix>(fix);
+        Assert.Contains("MTU", fix.Problem);
+    }
+
+    [Fact]
+    public void MtuDiagnostics_PotentialIssue_ShouldOfferMtuAutoFix()
+    {
+        var check = new MtuDiagnosticsCheck();
+
+        var fixes = check.GetFixes(Result(check.CheckId, check.Name, DiagnosticSeverity.Suspicious, evidence: AdapterEvidence()));
+
+        var fix = Assert.Single(fixes);
+        Assert.IsType<MtuAutoFix>(fix);
+    }
+
+    [Fact]
+    public void MtuDiagnostics_WithoutAdapterEvidence_ShouldOfferNoFixes()
+    {
+        var check = new MtuDiagnosticsCheck();
+
+        var fixes = check.GetFixes(Result(check.CheckId, check.Name, DiagnosticSeverity.Warning));
+
+        Assert.Empty(fixes);
     }
 }

@@ -321,7 +321,10 @@ public sealed class GatewayCheck : DiagnosticCheck, IFixableCheck
         fixes.Add(new DhcpRenewFix(problem));
 
         if (unreachable)
+        {
             fixes.Add(new WinsockResetFix(problem));
+            fixes.Add(new TcpIpStackResetFix(problem));
+        }
 
         return fixes;
     }

@@ -388,6 +388,7 @@ public sealed class PacketLossCheck : DiagnosticCheck, IFixableCheck
         {
             fixes.Add(new DhcpRenewFix(problem));
             fixes.Add(new WinsockResetFix(problem));
+            fixes.Add(new TcpIpStackResetFix(problem));
         }
 
         return fixes;

@@ -1,8 +1,8 @@
 # PCDiag — Master Specification & Architecture Plan
 
-> **Document Status:** Phase 12 Complete  
+> **Document Status:** Phase 13 Complete  
 > **Date:** 2026-08-22  
-> **Version:** 1.9  
+> **Version:** 1.10  
 
 ---
 
@@ -863,6 +863,31 @@ DiagnosticResult
 **Guardrails:** read-only; no load test; unreadable counters degrade to `Unavailable`, never to a fabricated healthy/finding result.
 
 **Tests:** +20 new (classifier thresholds/verdicts/confidence, check-level healthy/elevated/high/unavailable/honesty/inventory/no-uninstall-rec) — 542 total. Real-machine smoke test: 8-core laptop → Healthy (≈2.5k interrupts/s, ≈212 DPCs/s, privileged 2.7%), confidence 90%.
+
+---
+
+### Phase 13 — Extend Fixes to More Checks ✅ Complete
+
+**Objective:** wire the orphaned `TcpIpStackResetFix` to applicable checks and add a new `MtuAutoFix` for MTU/path mismatches.
+
+**Changes:**
+- Wired `TcpIpStackResetFix` to `GatewayCheck` (unreachable gateway) and `PacketLossCheck` (unreachable paths). The fix was implemented in Phase 10 but never returned from `GetFixes()`.
+- Created `MtuAutoFix` — resets the interface MTU to the Windows default (1500) via `netsh interface ipv4 set subinterface`. Risk: Low, RequiresAdmin: true.
+- Implemented `IFixableCheck` on `MtuDiagnosticsCheck` — returns `MtuAutoFix` when ConfirmedMismatch or PotentialIssue is detected and an active adapter is available.
+
+**Fix inventory (8 fixes, 5 checks):**
+
+| Fix | Risk | Admin | Wired to |
+|-----|------|-------|----------|
+| `DnsCacheFlushFix` | Low | No | DnsDiagnosticsCheck |
+| `RestartNetworkAdapterFix` | Medium | Yes | GatewayCheck, PacketLossCheck |
+| `DhcpRenewFix` | Medium | Yes | GatewayCheck, PacketLossCheck |
+| `WinsockResetFix` | Medium | Yes | GatewayCheck, PacketLossCheck, TcpHealthCheck |
+| `TcpIpStackResetFix` | High | Yes | GatewayCheck, PacketLossCheck |
+| `AutotuningRestoreFix` | Medium | Yes | TcpHealthCheck |
+| `MtuAutoFix` | Low | Yes | MtuDiagnosticsCheck |
+
+**Tests:** 552 total (+12: 5 wiring tests updated/added, 5 MtuAutoFix unit tests, 2 new CheckFixWiringTests). All 552 passing.
 
 ---
 
