@@ -1,4 +1,5 @@
 using PCDiag.Core;
+using PCDiag.Correlation;
 
 namespace PCDiag.Reporting;
 
@@ -102,7 +103,7 @@ public sealed class TerminalRenderer
     }
 
     /// <summary>Print the detailed result view for a single check.</summary>
-    public void PrintDetailed(DiagnosticResult result)
+    public void PrintDetailed(DiagnosticResult result, IReadOnlyList<DiagnosticCorrelation>? correlations = null)
     {
         var style = StyleFor(result.Severity);
 
@@ -174,6 +175,27 @@ public sealed class TerminalRenderer
                 WriteLineColored($"  {ErrorMark} [{error.Code}] {error.Message}", ConsoleColor.Red);
             }
             _output.WriteLine();
+        }
+
+        // Show related findings from correlations
+        if (correlations is { Count: > 0 })
+        {
+            var related = correlations
+                .Where(c => c.RelatedCheckIds.Contains(result.CheckId))
+                .ToList();
+            if (related.Count > 0)
+            {
+                PrintSectionHeader("RELATED FINDINGS");
+                foreach (var corr in related)
+                {
+                    _output.Write($"  {Bullet} ");
+                    WriteColored(corr.Title, ConsoleColor.Cyan);
+                    _output.Write($" ({corr.Confidence:P0} confidence) — ");
+                    _output.Write(string.Join(", ", corr.RelatedCheckIds.Where(id => id != result.CheckId)));
+                    _output.WriteLine();
+                }
+                _output.WriteLine();
+            }
         }
     }
 

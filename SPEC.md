@@ -1,8 +1,8 @@
 # PCDiag — Master Specification & Architecture Plan
 
-> **Document Status:** Phase 13 Complete  
+> **Document Status:** Phase 14 Complete  
 > **Date:** 2026-08-22  
-> **Version:** 1.10  
+> **Version:** 1.11  
 
 ---
 
@@ -863,6 +863,36 @@ DiagnosticResult
 **Guardrails:** read-only; no load test; unreadable counters degrade to `Unavailable`, never to a fabricated healthy/finding result.
 
 **Tests:** +20 new (classifier thresholds/verdicts/confidence, check-level healthy/elevated/high/unavailable/honesty/inventory/no-uninstall-rec) — 542 total. Real-machine smoke test: 8-core laptop → Healthy (≈2.5k interrupts/s, ≈212 DPCs/s, privileged 2.7%), confidence 90%.
+
+---
+
+### Phase 14 — Diagnostic Correlation ✅ Complete
+
+**Objective:** correlate multiple findings instead of treating every warning independently, identify likely root causes, reduce duplicate warnings, and explain why findings are related.
+
+**New subsystem — Correlation Engine:**
+- `DiagnosticCorrelation` — model: Id, Title, Summary, Detail, Confidence, Severity, RelatedCheckIds, ConsolidatedEvidence, Recommendations, RootCauses.
+- `ICorrelationRule` — interface: `Analyze(IReadOnlyList<DiagnosticResult>)` returns correlations when a pattern matches.
+- `CorrelationEngine` — applies all rules to findings-only results (minimum 2 required), returns correlations ordered by severity then confidence.
+
+**Correlation rules (5):**
+
+| Rule | ID | Pattern | Confidence factor |
+|------|----|---------|-------------------|
+| `NetworkInstabilityRule` | CORR-NET-001 | Gateway + PacketLoss + TCP all findings | min × 0.85 |
+| `DnsDegradationRule` | CORR-NET-002 | DNS suspicious+ + Gateway suspicious+ | min × 0.8 |
+| `TcpStackCorruptionRule` | CORR-NET-003 | TCP suspicious+ + (Gateway or Loss) suspicious+ | min × 0.85 |
+| `HardwareNetworkLinkRule` | CORR-HW-NET-001 | (WHEA or Driver) suspicious+ + (Gateway or Loss) suspicious+ | min × 0.75 |
+| `DiskMemoryPressureRule` | CORR-SYS-001 | Storage warning+ + Memory warning+ | min × 0.8 |
+
+**Conflict detection:** Each rule checks for healthy counter-evidence that would invalidate the pattern (e.g. healthy gateway → DNS degradation rule suppressed). Correlations are not produced when findings are independent.
+
+**TUI integration:**
+- Results summary shows "N correlation insights" when correlations exist.
+- Menu option "View correlations (N)" displays all correlations with title, confidence, severity, related checks, detail, and root causes.
+- Detail view shows "RELATED FINDINGS" section listing which correlations the current check participates in.
+
+**Tests:** +26 new (CorrelationEngineTests: 12 tests for engine + all rule patterns; CorrelationConflictTests: 8 tests for conflict suppression; existing test files updated) — 578 total. All passing.
 
 ---
 

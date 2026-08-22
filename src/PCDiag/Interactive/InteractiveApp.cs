@@ -1,4 +1,5 @@
 using PCDiag.Core;
+using PCDiag.Correlation;
 using PCDiag.Fixes;
 using PCDiag.Infrastructure;
 using PCDiag.Inventory;
@@ -19,7 +20,8 @@ public static class InteractiveApp
         Details,
         Rerun,
         Info,
-        Fix
+        Fix,
+        Correlations
     }
 
     private sealed record FixableFinding(DiagnosticResult Result, IDiagnosticCheck Check, IReadOnlyList<DiagnosticFix> Fixes);
@@ -68,24 +70,28 @@ public static class InteractiveApp
             {
                 var checkList = checks ?? CheckRegistry.GetAllChecks();
                 var summary = await RunScanAsync(ansi, !autoStart, systemInventory, checkList, cts.Token);
-                ShowResults(ansi, summary, !autoStart, checkList);
+                var correlations = new CorrelationEngine().Analyze(summary.Results);
+                ShowResults(ansi, summary, correlations, !autoStart, checkList);
 
                 if (autoStart)
                     return 0;
 
                 var fixable = GetFixableFindings(summary, checkList);
-                switch (SelectAction(ansi, fixable))
+                switch (SelectAction(ansi, fixable, correlations))
                 {
                     case { Action: AppAction.Exit }:
                         return 0;
                     case { Action: AppAction.Details }:
-                        await ShowDetails(ansi, summary, systemInventory, checkList, cts.Token);
+                        await ShowDetails(ansi, summary, correlations, systemInventory, checkList, cts.Token);
                         break;
                     case { Action: AppAction.Info }:
                         await ShowSystemInfo(ansi, systemInventory, cts.Token);
                         break;
                     case { Action: AppAction.Fix, Fixes: { Count: > 0 } fixes }:
                         await ShowFixFlow(ansi, fixes, systemInventory, cts.Token);
+                        break;
+                    case { Action: AppAction.Correlations }:
+                        await ShowCorrelations(ansi, correlations);
                         break;
                     case { Action: AppAction.Rerun }:
                     default:
@@ -190,7 +196,7 @@ public static class InteractiveApp
             });
     }
 
-    private static void ShowResults(IAnsiConsole ansi, ScanSummary summary, bool interactive, IReadOnlyList<IDiagnosticCheck> checks)
+    private static void ShowResults(IAnsiConsole ansi, ScanSummary summary, IReadOnlyList<DiagnosticCorrelation> correlations, bool interactive, IReadOnlyList<IDiagnosticCheck> checks)
     {
         if (interactive)
             ansi.Clear();
@@ -208,6 +214,8 @@ public static class InteractiveApp
             ansi.MarkupLine($"  [green]{summary.Passed} healthy[/]");
         if (summary.Finding > 0)
             ansi.MarkupLine($"  [yellow]{summary.Finding} finding{(summary.Finding == 1 ? "" : "s")}[/]");
+        if (correlations.Count > 0)
+            ansi.MarkupLine($"  [cyan]{correlations.Count} correlation insight{(correlations.Count == 1 ? "" : "s")}[/]");
         if (summary.Error > 0)
             ansi.MarkupLine($"  [red]{summary.Error} error{(summary.Error == 1 ? "" : "s")}[/]");
         if (summary.Skipped > 0)
@@ -220,13 +228,15 @@ public static class InteractiveApp
         ansi.WriteLine();
     }
 
-    private static MenuChoice SelectAction(IAnsiConsole ansi, IReadOnlyList<FixableFinding> fixable)
+    private static MenuChoice SelectAction(IAnsiConsole ansi, IReadOnlyList<FixableFinding> fixable, IReadOnlyList<DiagnosticCorrelation> correlations)
     {
         var choices = new List<MenuChoice>();
         if (fixable.Count > 0)
             choices.Add(new MenuChoice(AppAction.Fix, $"Fix all problems ({fixable.Count})", fixable));
         foreach (var finding in fixable)
             choices.Add(new MenuChoice(AppAction.Fix, $"[[ FIX ]] {finding.Result.Name}", new[] { finding }));
+        if (correlations.Count > 0)
+            choices.Add(new MenuChoice(AppAction.Correlations, $"View correlations ({correlations.Count})"));
         choices.Add(new MenuChoice(AppAction.Details, "View check details"));
         choices.Add(new MenuChoice(AppAction.Info, "System info"));
         choices.Add(new MenuChoice(AppAction.Rerun, "Run scan again"));
@@ -251,6 +261,7 @@ public static class InteractiveApp
     private static async Task ShowDetails(
         IAnsiConsole ansi,
         ScanSummary summary,
+        IReadOnlyList<DiagnosticCorrelation> correlations,
         SystemInventory inventory,
         IReadOnlyList<IDiagnosticCheck> checks,
         CancellationToken token)
@@ -264,7 +275,7 @@ public static class InteractiveApp
                 .UseConverter(r => $"{r.CheckId} — {r.Name} ({r.Status})")
                 .AddChoices(summary.Results.OrderBy(r => r.Severity)));
 
-        new TerminalRenderer().PrintDetailed(pick);
+        new TerminalRenderer().PrintDetailed(pick, correlations);
         ansi.WriteLine();
 
         if (checks.FirstOrDefault(c => c.CheckId == pick.CheckId) is IFixableCheck fixable
@@ -399,5 +410,34 @@ public static class InteractiveApp
                 ? $"[bold green]✓ {Markup.Escape(result.Name)} issue resolved.[/]"
                 : $"[bold yellow]✕ {Markup.Escape(result.Name)} issue persists.[/]");
         }
+    }
+
+    private static Task ShowCorrelations(IAnsiConsole ansi, IReadOnlyList<DiagnosticCorrelation> correlations)
+    {
+        ansi.Clear();
+        ansi.MarkupLine("[bold cyan]CORRELATION INSIGHTS[/]");
+        ansi.MarkupLine(new string('─', 60));
+        ansi.WriteLine();
+
+        foreach (var corr in correlations)
+        {
+            var color = SeverityStyling.ColorFor(corr.Severity).ToMarkup();
+            ansi.MarkupLine($"[bold {color}]■ {Markup.Escape(corr.Title)}[/]");
+            ansi.MarkupLine($"  [bold]Confidence:[/] {corr.Confidence:P0}   [bold]Severity:[/] {corr.Severity}   [bold]Checks:[/] [grey]{string.Join(", ", corr.RelatedCheckIds)}[/]");
+            ansi.MarkupLine($"  {Markup.Escape(corr.Summary)}");
+            ansi.MarkupLine($"  [grey]{Markup.Escape(corr.Detail)}[/]");
+            ansi.WriteLine();
+
+            if (corr.RootCauses.Count > 0)
+            {
+                ansi.MarkupLine("  [bold]Likely root causes:[/]");
+                foreach (var cause in corr.RootCauses)
+                    ansi.MarkupLine($"    [grey]• {Markup.Escape(cause)}[/]");
+                ansi.WriteLine();
+            }
+        }
+
+        ansi.MarkupLine("[grey]Press [bold green]ENTER[/] to return[/]");
+        return Task.CompletedTask;
     }
 }
