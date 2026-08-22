@@ -41,7 +41,7 @@ public class DriverLatencyCheckTests
 
         Assert.Equal(DiagnosticStatus.Finding, result.Status);
         Assert.Equal(DiagnosticSeverity.Suspicious, result.Severity);
-        Assert.Contains("Potential driver latency issue", result.Summary);
+        Assert.Contains("Elevated interrupt or DPC activity", result.Summary);
         Assert.Contains(result.Evidence, e => e.Description == "Total Activity (_Total)");
         Assert.Contains(result.Evidence, e => e.Description == "CPU Correlation");
         Assert.Equal(0.5, result.Confidence, 2);
@@ -59,7 +59,7 @@ public class DriverLatencyCheckTests
 
         Assert.Equal(DiagnosticStatus.Finding, result.Status);
         Assert.Equal(DiagnosticSeverity.Warning, result.Severity);
-        Assert.Equal(0.71, result.Confidence, 2);
+        Assert.Equal(0.7, result.Confidence, 2);
     }
 
     [Fact]
@@ -112,8 +112,10 @@ public class DriverLatencyCheckTests
 
         var drivers = result.Evidence.Single(e => e.Description == "Loaded Drivers (context)");
         Assert.Contains("Context only", drivers.Value);
-        Assert.Equal(3, result.Evidence.Count(e => e.Description == "Driver"));
-        Assert.Contains(result.Evidence, e => e.Description == "Device" && e.Value == "NVIDIA GeForce");
+        Assert.Contains("3 running driver(s)", drivers.Value);
+        var devices = result.Evidence.Single(e => e.Description == "Devices Present (context)");
+        Assert.Contains("NVIDIA GeForce", devices.Value);
+        Assert.Contains("Intel Wi-Fi", devices.Value);
     }
 
     [Fact]

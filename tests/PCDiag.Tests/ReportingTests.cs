@@ -1,4 +1,3 @@
-using PCDiag.Checks.Windows;
 using PCDiag.Core;
 using PCDiag.Reporting;
 
@@ -199,12 +198,12 @@ public class ReportingTests
     [Fact]
     public void PrintProgress_ShouldIncludeCheckIdAndStatus()
     {
-        var check = new EnvironmentCheck();
-        var result = RichResult("WIN-ENV-001", DiagnosticSeverity.Healthy, DiagnosticStatus.Passed);
+        var check = new SyncStubCheck("TST-001", TestResults.Healthy("TST-001"));
+        var result = RichResult("TST-001", DiagnosticSeverity.Healthy, DiagnosticStatus.Passed);
 
         var text = Capture(r => r.PrintProgress(check, result, TimeSpan.FromSeconds(1)));
 
-        Assert.Contains("WIN-ENV-001", text);
+        Assert.Contains("TST-001", text);
         Assert.Contains("PASSED", text);
     }
 
@@ -219,11 +218,11 @@ public class ReportingTests
     [Fact]
     public void CheckList_ShouldPrintGroupedChecks()
     {
-        var checks = new IDiagnosticCheck[] { new EnvironmentCheck() };
+        var checks = new IDiagnosticCheck[] { new SyncStubCheck("TST-001", TestResults.Healthy("TST-001")) };
 
         var text = Capture(r => r.PrintCheckList(checks));
 
         Assert.Contains("AVAILABLE CHECKS", text);
-        Assert.Contains("WIN-ENV-001", text);
+        Assert.Contains("TST-001", text);
     }
 }

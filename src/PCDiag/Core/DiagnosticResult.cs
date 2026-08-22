@@ -6,7 +6,7 @@ namespace PCDiag.Core;
 /// </summary>
 public sealed record DiagnosticResult
 {
-    /// <summary>Unique identifier for this check (e.g., "WIN-ENV-001").</summary>
+    /// <summary>Unique identifier for this check (e.g., "NET-DNS-001").</summary>
     public required string CheckId { get; init; }
 
     /// <summary>Human-readable name of the check.</summary>

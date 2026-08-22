@@ -6,7 +6,7 @@ namespace PCDiag.Core;
 /// </summary>
 public interface IDiagnosticCheck
 {
-    /// <summary>Unique identifier for this check (e.g., "WIN-ENV-001").</summary>
+    /// <summary>Unique identifier for this check (e.g., "NET-DNS-001").</summary>
     string CheckId { get; }
 
     /// <summary>Human-readable name.</summary>

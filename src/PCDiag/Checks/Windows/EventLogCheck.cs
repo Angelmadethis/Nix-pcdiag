@@ -35,7 +35,7 @@ public sealed class EventLogCheck : EventLogDiagnosticCheck
     protected override async Task<DiagnosticResult> RunAsync(DiagnosticContext context, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var analysis = await RunAnalysisAsync(cancellationToken);
+        var analysis = await RunAnalysisAsync(context);
         cancellationToken.ThrowIfCancellationRequested();
 
         var severity = analysis.MaxSeverity;

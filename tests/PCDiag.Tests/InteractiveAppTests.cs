@@ -1,4 +1,3 @@
-using PCDiag.Checks.Windows;
 using PCDiag.Core;
 using PCDiag.Infrastructure;
 using PCDiag.Interactive;
@@ -12,7 +11,7 @@ public class InteractiveAppTests
 {
     private static readonly IReadOnlyList<IDiagnosticCheck> NoNetworkChecks = new IDiagnosticCheck[]
     {
-        new EnvironmentCheck()
+        new SyncStubCheck("TST-001", TestResults.Healthy("TST-001"))
     };
 
     private static readonly SystemInventory StubInventory = new()
@@ -41,7 +40,7 @@ public class InteractiveAppTests
         Assert.Equal(0, exitCode);
         Assert.Contains("Windows PC Diagnostic Tool", console.Output);
         Assert.Contains("SCAN RESULTS", console.Output);
-        Assert.Contains("WIN-ENV-001", console.Output);
+        Assert.Contains("TST-001", console.Output);
         Assert.Contains("Risk Score", console.Output);
     }
 

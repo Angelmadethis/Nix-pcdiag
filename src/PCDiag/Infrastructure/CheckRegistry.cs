@@ -19,7 +19,6 @@ public static class CheckRegistry
     {
         return new List<IDiagnosticCheck>
         {
-            new EnvironmentCheck(),
             new DnsDiagnosticsCheck(),
             new MtuDiagnosticsCheck(),
             new GatewayCheck(),

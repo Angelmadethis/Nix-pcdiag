@@ -22,8 +22,8 @@ public sealed class DriverLatencyCheck : DiagnosticCheck
     public override string Name => "Interrupt & DPC Activity (driver latency indicators)";
     public override DiagnosticCategory Category => DiagnosticCategory.Hardware;
     public override string Description =>
-        "Samples interrupt and DPC activity from performance counters to detect sustained driver-related latency indicators " +
-        "(microstutters, audio glitches, input delay, FPS hitching, network spikes).";
+        "Samples interrupt and DPC activity rates from performance counters to detect sustained elevation " +
+        "that can correlate with microstutters, audio glitches, input delay, FPS hitching, or network spikes.";
 
     public DriverLatencyCheck(IInterruptSnapshotSource? source = null, InterruptOptions? options = null)
     {
@@ -72,16 +72,18 @@ public sealed class DriverLatencyCheck : DiagnosticCheck
                 }
                 : Array.Empty<string>(),
             limitations: CheckLimitations,
-            confidence: InterruptClassifier.ComputeConfidence(assessment));
+            confidence: severity == DiagnosticSeverity.Healthy
+                ? InterruptClassifier.ComputeConfidence(assessment)
+                : Math.Min(InterruptClassifier.ComputeConfidence(assessment), 0.7));
     }
 
     private static string BuildSummary(InterruptAssessment assessment)
         => assessment.Verdict switch
         {
             InterruptVerdict.Suspicious =>
-                "Potential driver latency issue: interrupt or DPC activity is elevated during the sample window.",
+                "Elevated interrupt or DPC activity was observed during the sample window (activity rates, not true DPC latency).",
             InterruptVerdict.Warning =>
-                "Potential driver latency issue: interrupt or DPC activity is high and coincides with heavy kernel/CPU load.",
+                "High interrupt or DPC activity was observed and coincides with heavy kernel/CPU load (activity rates, not true DPC latency).",
             _ => "No sustained elevated interrupt or DPC activity was observed during the sample window."
         };
 
@@ -139,24 +141,25 @@ public sealed class DriverLatencyCheck : DiagnosticCheck
 
         if (snapshot.InventoryAvailable)
         {
-            evidence.Add(new DiagnosticEvidence
-            {
-                Description = "Loaded Drivers (context)",
-                Value = $"{snapshot.LoadedDrivers.Count} running driver(s) found (first up to 20 shown). Context only - this check does not " +
-                        "attribute interrupt/DPC activity to any of them.",
-                Source = "Win32_SystemDriver"
-            });
-            foreach (var driver in snapshot.LoadedDrivers.Take(20))
-                evidence.Add(new DiagnosticEvidence { Description = "Driver", Value = driver, Source = "Win32_SystemDriver" });
+            var driverCount = snapshot.LoadedDrivers.Count;
+            var deviceCount = snapshot.Devices.Count;
+            var topDrivers = string.Join(", ", snapshot.LoadedDrivers.Take(10));
+            var topDevices = string.Join(", ", snapshot.Devices.Take(10));
+            var driverSuffix = driverCount > 10 ? $" (and {driverCount - 10} more)" : "";
+            var deviceSuffix = deviceCount > 10 ? $" (and {deviceCount - 10} more)" : "";
 
             evidence.Add(new DiagnosticEvidence
             {
+                Description = "Loaded Drivers (context)",
+                Value = $"{driverCount} running driver(s){driverSuffix}: {topDrivers}. Context only - this check does not attribute activity to any of them.",
+                Source = "Win32_SystemDriver"
+            });
+            evidence.Add(new DiagnosticEvidence
+            {
                 Description = "Devices Present (context)",
-                Value = $"{snapshot.Devices.Count} device(s) found (first up to 20 shown). Context only - no attribution is made.",
+                Value = $"{deviceCount} device(s){deviceSuffix}: {topDevices}. Context only - no attribution is made.",
                 Source = "Win32_PnPEntity"
             });
-            foreach (var device in snapshot.Devices.Take(20))
-                evidence.Add(new DiagnosticEvidence { Description = "Device", Value = device, Source = "Win32_PnPEntity" });
         }
         else
         {

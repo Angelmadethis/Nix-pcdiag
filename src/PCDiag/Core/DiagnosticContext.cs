@@ -24,6 +24,13 @@ public sealed class DiagnosticContext
     /// </summary>
     public PCDiag.Inventory.SystemInventory? Inventory { get; }
 
+    /// <summary>
+    /// Shared event log analysis cache. The first event-log check performs the full
+    /// analysis and stores it here; subsequent focused checks filter the cached result
+    /// instead of re-querying the event log.
+    /// </summary>
+    public Events.EventLogAnalysis? CachedEventLogAnalysis { get; set; }
+
     public DiagnosticContext(
         ScanMode mode = ScanMode.Standard,
         bool isAdministrator = false,

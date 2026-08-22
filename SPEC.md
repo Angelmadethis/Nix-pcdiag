@@ -1,8 +1,8 @@
 # PCDiag — Master Specification & Architecture Plan
 
-> **Document Status:** Phase 11 Complete  
-> **Date:** 2026-08-20  
-> **Version:** 1.8  
+> **Document Status:** Phase 12 Complete  
+> **Date:** 2026-08-22  
+> **Version:** 1.9  
 
 ---
 
@@ -154,14 +154,20 @@ The project has a working foundation with the following components:
 #### Checks Implemented
 | Check ID | Name | Category | Status |
 |----------|------|----------|--------|
-| `WIN-ENV-001` | Environment | Windows | ✅ Example (proves scan architecture) |
 | `NET-DNS-001` | DNS Resolution | Network | ✅ Real check (multiple probes, per-resolver stats, reliability/reachability) |
 | `NET-MTU-001` | Interface & Path MTU | Network | ✅ Real check (interface MTU vs measured path MTU, DF probing, black-hole detection) |
 | `NET-GWY-001` | Default Gateway | Network | ✅ Real check (reachability, loss, latency) |
 | `NET-LOSS-001` | Packet Loss & Latency | Network | ✅ Real check (gateway + up to two internet endpoints) |
 | `NET-CONN-001` | TCP Connection States | Network | ✅ Real check (TIME_WAIT vs port pool, CLOSE_WAIT clusters, established) |
 | `NET-TCP-001` | TCP Configuration & Statistics | Network | ✅ Real check (retransmissions, failures, auto-tuning, registry tweaks, adapter errors) |
-| *(empty)* | Performance, Hardware, Gaming, Security checks | — | 🔲 Not started |
+| `WIN-EVT-001` | Event Log Analysis | Windows | ✅ Real check (aggregates events by category, detects repeating patterns) |
+| `HW-WHEA-001` | WHEA Hardware Errors | Hardware | ✅ Real check (fatal/corrected WHEA records, hardware fault detection) |
+| `HW-DRV-001` | Driver & Display Stability | Hardware | ✅ Real check (TDR resets, driver failures, bugchecks, storage controller errors) |
+| `HW-LAT-001` | Interrupt & DPC Activity | Hardware | ✅ Real check (interrupt/DPC activity rates from perf counters, confidence-capped) |
+| `PERF-MEM-001` | Memory Usage & Pressure | Performance | ✅ Real check (commit ratio, available memory, paging activity, kernel pools) |
+| `PERF-PAG-001` | Pagefile Configuration | Performance | ✅ Real check (disabled pagefile risk, fixed-size capacity, system-managed) |
+| `PERF-DISK-001` | Storage & Disk Health | Performance | ✅ Real check (volumes, free space, SMART/NVMe health, disk latency, events) |
+| *(empty)* | Gaming, Security checks | — | 🔲 Not started |
 
 #### Tests (`tests/PCDiag.Tests/`)
 | File | Purpose | Status |
@@ -171,7 +177,6 @@ The project has a working foundation with the following components:
 | `ScanSummaryTests.cs` | Status counts, risk score, max severity | ✅ Complete (6 tests) |
 | `ScoringTests.cs` | Documented risk score model (max-dominant, confidence-weighted) | ✅ Complete (10 tests) |
 | `ReportingTests.cs` | Rich/plain rendering, grouping, detailed sections, progress, version | ✅ Complete (12 tests) |
-| `EnvironmentCheckTests.cs` | Example check sync + async paths | ✅ Complete (2 tests) |
 | `InteractiveStylingTests.cs` | Severity → color/markup, risk-score color thresholds | ✅ Complete (11 tests) |
 | `ResultsTableTests.cs` | Spectre results table construction and rendering | ✅ Complete (4 tests) |
 | `InteractiveAppTests.cs` | End-to-end TUI flow: ENTER starts scan + results, ESC exits, System info menu prints inventory; tests inject checks to avoid network access | ✅ Complete (3 tests) |
@@ -446,7 +451,7 @@ PCDiag.sln
 │   │       └── TcpHealthClassifier.cs      # TCP health verdict (ratios, tuning, tweaks)
 │   ├── Checks/
 │   │   ├── Windows/
-│   │   │   └── EnvironmentCheck.cs         # ✅ WIN-ENV-001 (example)
+│   │   │   └── EventLogCheck.cs         # ✅ WIN-EVT-001 (Event Log Analysis)
 │   │   └── Network/
 │   │       ├── DnsDiagnosticsCheck.cs      # ✅ NET-DNS-001 (DNS Resolution)
 │   │       ├── MtuDiagnosticsCheck.cs      # ✅ NET-MTU-001 (Interface & Path MTU)
@@ -472,7 +477,6 @@ PCDiag.sln
     ├── InteractiveStylingTests.cs          # Severity/risk styling helpers
     ├── ResultsTableTests.cs                # Spectre results table
     ├── InteractiveAppTests.cs              # End-to-end TUI flow tests
-    ├── EnvironmentCheckTests.cs            # Example check tests
     ├── TestChecks.cs                       # Mock checks for tests
     └── Inventory/
         ├── VmDetectorTests.cs              # VM heuristic tests
@@ -859,6 +863,23 @@ DiagnosticResult
 **Guardrails:** read-only; no load test; unreadable counters degrade to `Unavailable`, never to a fabricated healthy/finding result.
 
 **Tests:** +20 new (classifier thresholds/verdicts/confidence, check-level healthy/elevated/high/unavailable/honesty/inventory/no-uninstall-rec) — 542 total. Real-machine smoke test: 8-core laptop → Healthy (≈2.5k interrupts/s, ≈212 DPCs/s, privileged 2.7%), confidence 90%.
+
+---
+
+### Phase 12 — Audit & Trim ✅ Complete
+
+**Objective:** audit every diagnostic and feature, classify as KEEP/IMPROVE/REMOVE, and clean up without adding new features.
+
+**Removed:**
+- `WIN-ENV-001` (Environment check) — example check that only displayed basic system information (OS version, machine name, architecture, uptime). Zero diagnostic value; all data was already collected by the System Inventory and displayed via `pcdiag info` and the TUI "System info" menu. Removed the check, its test file (`EnvironmentCheckTests.cs`), and its registration from `CheckRegistry`.
+
+**Improved:**
+- `HW-LAT-001` (Interrupt & DPC Activity) — tightened description to emphasize "activity rates" not "latency indicators"; capped confidence at 0.7 for findings (healthy remains at 0.9) since the check measures activity rates, not true per-DPC latency; consolidated driver/device evidence from 20+ individual rows into 2 summary rows with comma-separated names; updated summary text to clarify "activity rates, not true DPC latency".
+- Event-log triple-query elimination — added `CachedEventLogAnalysis` property to `DiagnosticContext` and refactored `EventLogDiagnosticCheck.RunAnalysisAsync()` to cache the full analysis on first call and filter by `FocusCategories` on subsequent calls. The 3 event-log checks (EventLog, WHEA, Driver) now share one event-log query pass instead of 3 independent queries.
+
+**Kept (13 checks):** All network (6), performance (3), hardware (3), and Windows event-log (1) checks are genuinely useful diagnostics that detect real Windows, networking, hardware, performance, or gaming problems.
+
+**Tests:** 540 passing (down from 542: removed 2 EnvironmentCheck tests, updated 3 test files for event-log cache and DriverLatencyCheck improvements).
 
 ---
 
